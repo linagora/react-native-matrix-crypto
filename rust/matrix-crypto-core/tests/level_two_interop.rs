@@ -1036,7 +1036,7 @@ fn level_two_interoperability_over_a_real_homeserver() {
             encode_segment(&transaction_id("corrupt"))
         ),
         Some(&library.token),
-        Some(&corrupted_content.to_string()),
+        Some(&control_content.to_string()),
     );
     let corrupted_event_id = corrupted["event_id"]
         .as_str()
