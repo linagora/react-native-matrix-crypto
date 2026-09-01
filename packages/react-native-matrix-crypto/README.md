@@ -554,10 +554,10 @@ How this library was built, what the measurements do and do not establish, and t
 
 What remains open before 1.0:
 
-* a scannable code read by an ordinary phone camera, as something a run can assert rather than something a person confirms
-* multi participant scenarios and federation neutral test coverage
-* cross implementation testing against both Synapse and Continuwuity
-* a stabilised API, published documentation and multi platform CI for 1.0
+* a scannable code read by an ordinary phone camera, as something a run can assert rather than something a person confirms — tracked as [#6](https://github.com/linagora/react-native-matrix-crypto/issues/6)
+* multi participant scenarios and federation neutral test coverage — tracked as [#7](https://github.com/linagora/react-native-matrix-crypto/issues/7)
+* cross implementation testing against both Synapse and Continuwuity — tracked as [#8](https://github.com/linagora/react-native-matrix-crypto/issues/8)
+* a stabilised API, published documentation and multi platform CI for 1.0 — tracked as [#9](https://github.com/linagora/react-native-matrix-crypto/issues/9)
 
 ## Contributing
 
