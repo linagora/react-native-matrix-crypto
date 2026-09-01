@@ -596,8 +596,18 @@ jobs:
       # Same reasoning as probe-android: gates ran on a different runner and
       # cannot see the tree this build leaves behind.
       - run: yarn gate:stubs
+      # A real `cd`, not `--project-directory`: the latter leaves the
+      # autolinking CLI's node process running from the invoking directory,
+      # and it then resolves the workspace root's package.json -- which
+      # names no react-native project -- so `use_native_modules!` parses a
+      # config without a `project` key and the Podfile fails with
+      # "undefined method `[]' for nil". Watched failing that way in CI on
+      # 2026-09-01 and reproduced locally; from inside ios/ the CLI walks up
+      # to the example app's package.json, which is the project.
       - name: Install pods
-        run: pod install --project-directory=packages/example-app/ios
+        run: |
+          cd packages/example-app/ios
+          pod install
       - name: Build the example app for a simulator
         # ARCHS=arm64 is load-bearing, not an optimisation: the slice this
         # leg builds is aarch64-apple-ios-sim only, and a generic simulator
