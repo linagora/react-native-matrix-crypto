@@ -274,12 +274,22 @@ CONTAINER_B=""
 NETWORK=""
 WORKDIR=""
 RUN_FAILED=0
+# The last progress marker reached, printed by cleanup however the run ends.
+# On 2026-09-01 the federated synapse leg died on the runner three times with
+# no output at all, eighteen seconds after the last echo, and a death that
+# names nothing cannot be told apart from a defect in a dependency. Each
+# bring-up step updates this immediately before the risky command it marks.
+PROGRESS="starting"
 
 # Idempotent, and every step of it is allowed to fail: this runs from a trap,
 # including on the path where something has already gone wrong, and a
 # teardown that can itself fail is not a teardown. The same rule the test's
 # own `Teardown` guard follows in `Drop`, for the same reason.
 cleanup() {
+  # Unconditional, including on the silent-death path: a cleanup that runs
+  # without saying so reads, in a job log, exactly like the thing that killed
+  # the run never happening at all.
+  echo "cleanup: entered (RUN_FAILED=$RUN_FAILED, last progress: $PROGRESS)" >&2
   if [ -n "$CONTAINER" ]; then
     # Only on a failure, and only after the container is already doomed. A
     # passing run prints none of this: continuwuity echoes the password it
@@ -324,8 +334,8 @@ cleanup() {
 # they exit rather than clean up directly, so the EXIT trap does the work once
 # and there is exactly one teardown path to reason about.
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM HUP
+trap 'echo "got INT at progress: $PROGRESS" >&2; exit 130' INT
+trap 'echo "got TERM/HUP at progress: $PROGRESS" >&2; exit 143' TERM HUP
 
 WORKDIR=$(mktemp -d)
 
@@ -482,11 +492,13 @@ EOF
     # embedded DNS answers aliases on user-defined networks, which is what
     # makes the server_name DNS-resolvable for federation.
     NETWORK="rnmc-level-two-fed-$$-$STARTED_AT"
+    PROGRESS="federated docker network create"
     docker network create \
       --label "$CONTAINER_LABEL" \
       --label "$STARTED_LABEL=$STARTED_AT" \
       --subnet 172.30.7.0/24 "$NETWORK" >/dev/null \
       || fail "the federated docker network could not be created."
+    PROGRESS="federated docker network created: $NETWORK"
 
     # One self-signed certificate per server, its SAN the name the other
     # server connects to. TLS is not optional here: neither implementation
@@ -516,6 +528,10 @@ EOF
     # involved the way there is with continuwuity's forgejo.
     PULLED=""
     LAST_PULL_ERROR=""
+    # Post-mortem context for the runner environment, printed before the
+    # operation that has been dying silently on this leg: disk and memory
+    # are the two usual external killers of a large `docker pull`.
+    echo "runner state before pull: $(df -h / | tail -1 | tr -s ' ') | mem: $(free -m | awk 'NR==2{print $4" MB free"}') | docker: $(docker system df --format '{{.Type}} {{.TotalCount}}/{{.Size}}' 2>/dev/null | tr '\n' ' ')"
     for attempt in 1 2 3; do
       if docker image inspect "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
         PULLED=1
@@ -526,9 +542,12 @@ EOF
       # synapse leg died at this line on the runner with no output at all, and
       # a failure that cannot report what the dependency said cannot be told
       # apart from a defect in this script.
+      PROGRESS="synapse image pull attempt $attempt"
       LAST_PULL_ERROR=$(docker pull "$SYNAPSE_IMAGE" 2>&1 >/dev/null | tail -3) || true
+      PROGRESS="synapse image pull attempt $attempt finished (error: ${LAST_PULL_ERROR:-none})"
       if docker image inspect "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
         PULLED=1
+        PROGRESS="synapse image present"
         break
       fi
       if [ -n "$LAST_PULL_ERROR" ]; then
