@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# An unguarded command that fails under `set -e` would otherwise kill the run
+# without saying which line or why. On 2026-09-01 the federated synapse leg
+# died this way on the runner -- forty seconds in, no output, exit 1 -- and a
+# death that names nothing cannot be told apart from a defect in a dependency.
+# Handled failures (`|| fail`, conditions, loops) do not fire this trap; it
+# reports exactly the unhandled ones.
+trap 'echo "FAIL: an unguarded command failed at line $LINENO (exit $?)." >&2; exit 1' ERR
+
 # Runs all five level 2 interoperability proofs (design doc section 8)
 # against a Matrix homeserver this script starts, provisions, and destroys --
 # six, when FEDERATED=1 stands up a second, federating homeserver for the
@@ -523,7 +531,9 @@ EOF
         PULLED=1
         break
       fi
-      [ -n "$LAST_PULL_ERROR" ] && echo "  pull said: $LAST_PULL_ERROR"
+      if [ -n "$LAST_PULL_ERROR" ]; then
+        echo "  pull said: $LAST_PULL_ERROR"
+      fi
       sleep $(( attempt * 5 ))
     done
     [ -n "$PULLED" ] || fail "could not pull $SYNAPSE_IMAGE after three attempts.
