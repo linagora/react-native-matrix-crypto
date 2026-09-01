@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # Runs all five level 2 interoperability proofs (design doc section 8)
-# against a Matrix homeserver this script starts, provisions, and destroys.
+# against a Matrix homeserver this script starts, provisions, and destroys --
+# six, when FEDERATED=1 stands up a second, federating homeserver for the
+# proof that spans both (see the FEDERATED block near HOMESERVER_IMPL below).
 #
 #   * `level_two_interop` -- a third-party client decrypts what this library
 #     encrypts, and this library decrypts what it sends. M2's final exit
@@ -53,6 +55,21 @@ set -euo pipefail
 # throwaway Continuwuity; see the image pins below for what each one is and
 # what its bring-up costs. Every other line of this header applies to both.
 #
+#   FEDERATED=1 HOMESERVER_IMPL=synapse ./scripts/run-level-two-interop.sh
+#
+# additionally stands up a SECOND container of the same implementation, on a
+# per-run docker network, that FEDERATES with the first, creates one more
+# account on it, and runs a sixth proof after the five: three devices across
+# the two servers exchanging encrypted events, with one device joining after
+# the first message (issue #7, `level_two_federated.rs`). Federation between
+# the two is over TLS with per-server self-signed certificates -- neither
+# implementation federates over plain HTTP -- so the federated bring-up
+# generates a certificate per server and configures each implementation's own
+# allow-invalid-certificates knob; the continuwuity and synapse sections below
+# say which knob and why it is safe on a loopback-only, per-run network.
+# FEDERATED=1 with MATRIX_INTEROP_HOMESERVER set is refused: the manual path
+# names one homeserver, and this script cannot stand up the second one for it.
+#
 # WHY A THROWAWAY HOMESERVER RATHER THAN CI SECRETS
 #
 # The alternative was a secret in this public repository's CI pointing at a
@@ -78,6 +95,10 @@ set -euo pipefail
 #   * ONE of each for
 #     `test a_third_party_clients_verification_reaches_the_short_authentication_string`,
 #     which spawns no child.
+#
+# With FEDERATED=1 the same assertions run for a sixth proof after the five,
+# `test three_devices_across_two_federating_homeservers ... ok`, which also
+# spawns no libtest child (its two extra parties are matrix-nio subprocesses).
 #
 # Exactly those counts, asserted per test; see `run_proof` for what a smaller
 # and what a larger number each mean.
@@ -155,11 +176,35 @@ SYNAPSE_IMAGE=${SYNAPSE_IMAGE:-docker.io/matrixdotorg/synapse@sha256:edf259d2b57
 # (MATRIX_INTEROP_HOMESERVER) starts no container, so it is unaffected.
 HOMESERVER_IMPL=${HOMESERVER_IMPL:-continuwuity}
 
+# Whether the run additionally stands up a second, federating homeserver for
+# the sixth proof. Validated where HOMESERVER_IMPL is, next to the check
+# that refuses anything but 0 or 1 before anything is started.
+FEDERATED=${FEDERATED:-0}
+
 # The homeserver's `server_name`, which is also the domain half of the MXID.
 # `localhost` is legal, needs no DNS and no certificate, and cannot be
-# confused with anybody's real deployment.
-SERVER_NAME=localhost
+# confused with anybody's real deployment. In federated mode the two servers
+# need names each other's docker DNS can resolve, so they become
+# a.rnmc.test / b.rnmc.test: still not a real deployment (`.test` is
+# RFC 2606's documentation TLD), and the network alias below is what makes
+# the names resolve on the per-run network. Why not a.localhost /
+# b.localhost: the DNS library Continuwuity uses (hickory-resolver) answers
+# ANY name under `.localhost` with the loopback address without ever asking
+# DNS -- RFC 6761, enforced in its caching client -- so both federated
+# Continuwuity containers would invite and query themselves, and the proof
+# would silently be single-server. Verified from source and in a live run:
+# the invitation fails with `Destination mismatch` because the invite
+# lands back on the inviting server.
+SERVER_NAME_A=localhost
+SERVER_NAME_B=localhost
+if [ "$FEDERATED" = "1" ]; then
+  SERVER_NAME_A=a.rnmc.test
+  SERVER_NAME_B=b.rnmc.test
+fi
 LOCALPART=interop
+# A sixth account, on server B, for the federated proof alone. Same generated
+# password, so a federated run still has exactly one secret in it.
+LOCALPART_FEDERATED=interop-other
 
 # A second account, for `level_two_identity_challenge` alone. It needs one to
 # itself and the reason is structural: it has to begin on an account holding no
@@ -217,6 +262,8 @@ STARTED_LABEL=org.linagora.rnmc.level-two-interop.started
 STALE_AFTER_SECONDS=7200
 
 CONTAINER=""
+CONTAINER_B=""
+NETWORK=""
 WORKDIR=""
 RUN_FAILED=0
 
@@ -238,6 +285,19 @@ cleanup() {
     fi
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     CONTAINER=""
+  fi
+  if [ -n "$CONTAINER_B" ]; then
+    # Same label as the first container, so the stale sweep below also
+    # covers a kill -9 between the two `docker run`s. Only the first
+    # container's logs are dumped above: the two run the same image with
+    # the same configuration apart from the server name, and one tail is
+    # enough to see why an implementation refused to start.
+    docker rm -f "$CONTAINER_B" >/dev/null 2>&1 || true
+    CONTAINER_B=""
+  fi
+  if [ -n "$NETWORK" ]; then
+    docker network rm "$NETWORK" >/dev/null 2>&1 || true
+    NETWORK=""
   fi
   if [ -n "$WORKDIR" ]; then
     # `chmod` first, and it is not belt and braces: Go writes its module
@@ -266,6 +326,12 @@ WORKDIR=$(mktemp -d)
 if [ -n "${MATRIX_INTEROP_HOMESERVER:-}" ]; then
   # The manual path, unchanged. Everything the test needs is already in the
   # environment, so start nothing and destroy nothing.
+  [ "$FEDERATED" != "1" ] \
+    || fail "FEDERATED=1 cannot run against MATRIX_INTEROP_HOMESERVER.
+      The federated proof needs TWO homeservers that federate, and this
+      path names only one. Leave FEDERATED unset for the manual path, or
+      unset MATRIX_INTEROP_HOMESERVER and let the script stand both
+      containers up."
   [ -n "${MATRIX_INTEROP_USER:-}" ] \
     || fail "MATRIX_INTEROP_HOMESERVER is set but MATRIX_INTEROP_USER is not.
       Set all three of HOMESERVER, USER and PASSWORD to run against a real
@@ -358,6 +424,22 @@ $(docker ps -a --filter "label=$CONTAINER_LABEL" \
     --format "{{.ID}} {{.Label \"$STARTED_LABEL\"}}" 2>/dev/null || true)
 EOF
 
+  # Networks get the same label and the same bounded sweep: a kill -9 of a
+  # federated run leaves the bridge behind alongside the containers, and an
+  # inert bridge still holds a subnet nobody else can use.
+  while read -r stale_net stale_started; do
+    [ -n "$stale_net" ] || continue
+    case "$stale_started" in
+      '' | *[!0-9]*) continue ;;
+    esac
+    [ "$(( NOW - stale_started ))" -gt "$STALE_AFTER_SECONDS" ] || continue
+    echo "Removing a network left behind by a killed federated run ($stale_net)."
+    docker network rm "$stale_net" >/dev/null 2>&1 || true
+  done <<EOF
+$(docker network ls --filter "label=$CONTAINER_LABEL" \
+    --format "{{.Name}} {{.Label \"$STARTED_LABEL\"}}" 2>/dev/null || true)
+EOF
+
   # Generated per run, used once, and destroyed with the container. It is
   # registered with the Actions log masker before it is passed to anything,
   # so it cannot reach a job log.
@@ -373,9 +455,48 @@ EOF
       about their server; a value that fell through to one of them would be a
       run that proved something other than what was asked for." ;;
   esac
+  case "$FEDERATED" in
+    0 | 1) ;;
+    *) fail "FEDERATED must be 0 or 1, not '$FEDERATED'.
+      A value that fell through to one of the bring-ups below would be a run
+      that proved something other than what was asked for." ;;
+  esac
 
   STARTED_AT=$(date +%s)
   CONTAINER="rnmc-level-two-$$-$STARTED_AT"
+  CONTAINER_B="rnmc-level-two-fed-b-$$-$STARTED_AT"
+
+  if [ "$FEDERATED" = "1" ]; then
+    # The bridge both containers join. A fixed subnet, so the servers'
+    # allow-private-ranges configuration can name it without parsing what
+    # docker would otherwise have chosen. The aliases a.rnmc.test /
+    # b.rnmc.test are what make each server's name resolve on it: docker's
+    # embedded DNS answers aliases on user-defined networks, which is what
+    # makes the server_name DNS-resolvable for federation.
+    NETWORK="rnmc-level-two-fed-$$-$STARTED_AT"
+    docker network create \
+      --label "$CONTAINER_LABEL" \
+      --label "$STARTED_LABEL=$STARTED_AT" \
+      --subnet 172.30.7.0/24 "$NETWORK" >/dev/null \
+      || fail "the federated docker network could not be created."
+
+    # One self-signed certificate per server, its SAN the name the other
+    # server connects to. TLS is not optional here: neither implementation
+    # federates over plain HTTP, so the two servers can only meet over
+    # HTTPS, and HTTPS between two containers that will exist for one run
+    # cannot mean a public CA. What makes the self-signed posture safe on
+    # this network and nowhere else: the network is created and destroyed
+    # with the run, the published ports are loopback-only, and each
+    # implementation's certificate VERIFICATION is disabled only between
+    # the two containers (the knobs are set below, per implementation).
+    for which in A B; do
+      eval "san=\$SERVER_NAME_$which"
+      openssl req -x509 -newkey rsa:2048 -sha256 -days 2 -nodes \
+        -keyout "$WORKDIR/fed-$which.key" -out "$WORKDIR/fed-$which.crt" \
+        -subj "/CN=$san" -addext "subjectAltName=DNS:$san" >/dev/null 2>&1 \
+        || fail "the self-signed certificate for $san could not be generated."
+    done
+  fi
 
   if [ "$HOMESERVER_IMPL" = "synapse" ]; then
     # --- synapse: image, generated configuration, container ----------------
@@ -419,113 +540,207 @@ EOF
     # media store, the signing key it regenerates because the generated one
     # died with the generation container's tmpfs -- lands in the run
     # container's own fresh tmpfs and dies with it.
-    docker run -d \
-      --name "$CONTAINER-generate" \
-      --entrypoint /bin/sleep \
-      --tmpfs /data:rw,size=512m \
-      "$SYNAPSE_IMAGE" infinity >/dev/null \
-      || fail "the configuration container could not be started."
-    if ! docker exec \
-        -e SYNAPSE_SERVER_NAME="$SERVER_NAME" \
-        -e SYNAPSE_REPORT_STATS=no \
-        "$CONTAINER-generate" /start.py generate >/dev/null 2>&1; then
-      RUN_FAILED=1
-      fail "synapse could not generate its configuration. The container said:
-$(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
-    fi
-    docker exec "$CONTAINER-generate" cat /data/homeserver.yaml \
-        > "$WORKDIR/homeserver.yaml" 2>/dev/null \
-      || { RUN_FAILED=1; fail "the generated homeserver.yaml could not be read
-      out of the configuration container."; }
-    docker exec "$CONTAINER-generate" cat /data/localhost.log.config \
-        > "$WORKDIR/localhost.log.config" 2>/dev/null \
-      || { RUN_FAILED=1; fail "the generated log configuration could not be read
-      out of the configuration container."; }
-    docker rm -f "$CONTAINER-generate" >/dev/null 2>&1 || true
-
-    # Two deliberate changes to the image's own template, both appended at
-    # the end of the file:
     #
-    #   * registration_shared_secret, first removed and then set to a value
-    #     generated for this run. The template already carries a random one,
-    #     but it is never shown to anything, and parsing YAML back out is more
-    #     fragile than writing a value this script chose. The shared-secret
-    #     endpoint below is how the five accounts are created with
-    #     registration closed, which makes this secret the run's second
-    #     credential: it is masked like the password and never appears on a
-    #     command line, existing only in this file and inside the one
-    #     `openssl dgst` pipeline that computes a MAC with it.
-    #   * enable_registration: false, stated even though false is already
-    #     synapse's default, because the posture of this run -- registration
-    #     is closed and every account came from the endpoint -- is asserted
-    #     here rather than assumed from a default.
-    #
-    # Everything else the proofs rely on is left exactly as `generate` wrote
-    # it, and synapse's own strictness vouches for it: unlike continuwuity,
-    # synapse REFUSES to start on a configuration key it does not recognise,
-    # so a renamed or misspelled setting dies at startup with the key named
-    # (see the check the continuwuity path needs below for the contrast). The
-    # listener on 8008 has no bind_addresses, which synapse/config/server.py
-    # fills with every interface including 0.0.0.0; the database is sqlite at
-    # /data/homeserver.db, which the run container's tmpfs covers; and
-    # report_stats is false because SYNAPSE_REPORT_STATS=no said so above.
-    # Federation is left on, as the image ships it: the published port is
-    # loopback-only, so nothing off the machine can reach it either way --
-    # the same posture the continuwuity path sets with ALLOW_FEDERATION=false.
-    grep -q '^registration_shared_secret:' "$WORKDIR/homeserver.yaml" \
-      || fail "the generated homeserver.yaml carries no registration_shared_secret
-      line -- the image's template changed, and the account creation below
-      would be inventing a secret the server does not hold."
+    # One iteration per server: A always, B only when FEDERATED=1. The loop
+    # exists so the two federated containers are brought up by identical
+    # steps rather than by a copy of them that could drift.
     REGISTRATION_SECRET=$(openssl rand -hex 24)
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
       echo "::add-mask::$REGISTRATION_SECRET"
     fi
-    grep -v '^registration_shared_secret:' "$WORKDIR/homeserver.yaml" \
-      > "$WORKDIR/homeserver.yaml.new"
-    mv "$WORKDIR/homeserver.yaml.new" "$WORKDIR/homeserver.yaml"
-    {
-      printf 'registration_shared_secret: "%s"\n' "$REGISTRATION_SECRET"
-      printf 'enable_registration: false\n'
-      # Login rate limiting, effectively off for this throwaway server.
-      # Synapse's default rc_login allows a burst of five logins from one
-      # address and then one more every six seconds; a single run of these
-      # proofs logs in far more often than that -- five readiness probes
-      # below, then a login per test and per phase-two child -- and the
-      # sixth rapid login is refused with 429, which the harness reads as a
-      # credential failure. Brute-force protection means nothing on a
-      # loopback-only server whose accounts and password die with the
-      # container, and continuwuity imposes no such limit, so the two
-      # implementations are held to the same posture here.
-      printf 'rc_login:\n'
-      printf '  address:\n'
-      printf '    per_second: 1000000\n'
-      printf '    burst_count: 1000000\n'
-      printf '  account:\n'
-      printf '    per_second: 1000000\n'
-      printf '    burst_count: 1000000\n'
-      printf '  failed_attempts:\n'
-      printf '    per_second: 1000000\n'
-      printf '    burst_count: 1000000\n'
-    } >> "$WORKDIR/homeserver.yaml"
 
-    # `-p 127.0.0.1::8008` publishes on loopback only, on a port Docker
-    # chooses, so a run cannot collide with anything else on the machine and
-    # cannot be reached from off it.
-    #
-    # `--tmpfs /data` covers everything the server writes. The two read-only
-    # binds carry the configuration in over that tmpfs: the file a bind
-    # mounts is never written by the server, so nothing about the run's only
-    # non-tmpfs state can move underneath it.
-    docker run -d \
-      --name "$CONTAINER" \
-      --label "$CONTAINER_LABEL" \
-      --label "$STARTED_LABEL=$STARTED_AT" \
-      -p 127.0.0.1::8008 \
-      --tmpfs /data:rw,size=512m \
-      -v "$WORKDIR/homeserver.yaml:/data/homeserver.yaml:ro" \
-      -v "$WORKDIR/localhost.log.config:/data/localhost.log.config:ro" \
-      "$SYNAPSE_IMAGE" >/dev/null \
-      || fail "the homeserver container could not be started."
+    # The federation listener inserted into the generated configuration in
+    # federated mode, read into the file just after its `listeners:` key.
+    if [ "$FEDERATED" = "1" ]; then
+      cat > "$WORKDIR/fed-listener.yaml" <<'YAML'
+  - port: 8448
+    tls: true
+    type: http
+    resources:
+      - names: [federation]
+        compress: false
+YAML
+    fi
+
+    for which in A B; do
+      if [ "$which" = "A" ]; then
+        container="$CONTAINER"
+      else
+        [ "$FEDERATED" = "1" ] || break
+        container="$CONTAINER_B"
+      fi
+      eval "server_name=\$SERVER_NAME_$which"
+      yaml="$WORKDIR/homeserver-$which.yaml"
+      log_config="$server_name.log.config"
+
+      docker run -d \
+        --name "$container-generate" \
+        --entrypoint /bin/sleep \
+        --tmpfs /data:rw,size=512m \
+        "$SYNAPSE_IMAGE" infinity >/dev/null \
+        || fail "the configuration container could not be started."
+      if ! docker exec \
+          -e SYNAPSE_SERVER_NAME="$server_name" \
+          -e SYNAPSE_REPORT_STATS=no \
+          "$container-generate" /start.py generate >/dev/null 2>&1; then
+        RUN_FAILED=1
+        fail "synapse could not generate its configuration. The container said:
+$(docker logs "$container-generate" 2>&1 | tail -20 || true)"
+      fi
+      docker exec "$container-generate" cat /data/homeserver.yaml \
+          > "$yaml" 2>/dev/null \
+        || { RUN_FAILED=1; fail "the generated homeserver.yaml could not be read
+        out of the configuration container."; }
+      docker exec "$container-generate" cat "/data/$log_config" \
+          > "$WORKDIR/$log_config" 2>/dev/null \
+        || { RUN_FAILED=1; fail "the generated log configuration could not be read
+        out of the configuration container."; }
+      docker rm -f "$container-generate" >/dev/null 2>&1 || true
+
+      # Two deliberate changes to the image's own template, both appended at
+      # the end of the file:
+      #
+      #   * registration_shared_secret, first removed and then set to a value
+      #     generated for this run. The template already carries a random one,
+      #     but it is never shown to anything, and parsing YAML back out is more
+      #     fragile than writing a value this script chose. The shared-secret
+      #     endpoint below is how the accounts are created with registration
+      #     closed, which makes this secret the run's second credential: it is
+      #     masked like the password and never appears on a command line,
+      #     existing only in this file and inside the one `openssl dgst`
+      #     pipeline that computes a MAC with it. In federated mode both
+      #     servers hold the same secret; each only ever answers its own
+      #     endpoint with it.
+      #   * enable_registration: false, stated even though false is already
+      #     synapse's default, because the posture of this run -- registration
+      #     is closed and every account came from the endpoint -- is asserted
+      #     here rather than assumed from a default.
+      #
+      # Everything else the proofs rely on is left exactly as `generate` wrote
+      # it, and synapse's own strictness vouches for it: unlike continuwuity,
+      # synapse REFUSES to start on a configuration key it does not recognise,
+      # so a renamed or misspelled setting dies at startup with the key named
+      # (see the check the continuwuity path needs below for the contrast). The
+      # listener on 8008 has no bind_addresses, which synapse/config/server.py
+      # fills with every interface including 0.0.0.0; the database is sqlite at
+      # /data/homeserver.db, which the run container's tmpfs covers; and
+      # report_stats is false because SYNAPSE_REPORT_STATS=no said so above.
+      grep -q '^registration_shared_secret:' "$yaml" \
+        || fail "the generated homeserver.yaml carries no registration_shared_secret
+        line -- the image's template changed, and the account creation below
+        would be inventing a secret the server does not hold."
+      grep -v '^registration_shared_secret:' "$yaml" \
+        > "$yaml.new"
+      mv "$yaml.new" "$yaml"
+      {
+        printf 'registration_shared_secret: "%s"\n' "$REGISTRATION_SECRET"
+        printf 'enable_registration: false\n'
+        # Login rate limiting, effectively off for this throwaway server.
+        # Synapse's default rc_login allows a burst of five logins from one
+        # address and then one more every six seconds; a single run of these
+        # proofs logs in far more often than that -- five readiness probes
+        # below, then a login per test and per phase-two child -- and the
+        # sixth rapid login is refused with 429, which the harness reads as a
+        # credential failure. Brute-force protection means nothing on a
+        # loopback-only server whose accounts and password die with the
+        # container, and continuwuity imposes no such limit, so the two
+        # implementations are held to the same posture here.
+        printf 'rc_login:\n'
+        printf '  address:\n'
+        printf '    per_second: 1000000\n'
+        printf '    burst_count: 1000000\n'
+        printf '  account:\n'
+        printf '    per_second: 1000000\n'
+        printf '    burst_count: 1000000\n'
+        printf '  failed_attempts:\n'
+        printf '    per_second: 1000000\n'
+        printf '    burst_count: 1000000\n'
+      } >> "$yaml"
+
+      if [ "$FEDERATED" = "1" ]; then
+        # Federation with the sibling container, over TLS. Neither
+        # implementation federates over plain HTTP (verified from source:
+        # synapse's federation client always speaks TLS to the resolved
+        # port), so the plain-HTTP listener on 8008 -- which the tests and
+        # the second counterparty use -- stays, and a second listener serves
+        # federation over TLS on 8448, presenting the per-server self-signed
+        # certificate mounted at /data/fed.crt / fed.key.
+        #
+        #   * tls_certificate_path / tls_private_key_path: synapse requires
+        #     both the moment any listener has `tls: true`
+        #     (synapse/config/tls.py). The certificate is self-signed
+        #     because the pair exists for one run on a network nothing off
+        #     the machine can reach.
+        #   * federation_verify_certificates: false makes synapse skip
+        #     verifying the PEER's certificate. That is the knob the
+        #     self-signed posture leans on: it confines the trust the two
+        #     servers extend to whatever answers on the docker network,
+        #     which is exactly the sibling container this run started.
+        #   * ip_range_whitelist naming the run's docker subnet: synapse's
+        #     default ip_range_blacklist refuses federation traffic to and
+        #     from RFC1918 ranges, which is where every docker network
+        #     lives. The whitelist takes precedence over the blacklist for
+        #     the subnet it names.
+        #   * trusted_servers emptied: the shipped default is matrix.org,
+        #     consulted as a signature notary when a direct key fetch fails.
+        #     This network has no route to matrix.org, and with certificate
+        #     verification off synapse additionally refuses to start while
+        #     a notary without accept_keys_insecurely is configured. With
+        #     the list empty every key fetch goes straight to the origin
+        #     server, which here is the sibling container.
+        grep -q '^listeners:$' "$yaml" \
+          || fail "the generated homeserver.yaml carries no listeners section --
+          the image's template changed, and the federation listener insert
+          below would be writing into a file that is not what this script
+          has always read."
+        sed '/^listeners:$/r '"$WORKDIR/fed-listener.yaml" "$yaml" > "$yaml.new"
+        mv "$yaml.new" "$yaml"
+        # sed drops a trailing newline the generated file may lack, which
+        # would glue the keys appended below onto the template's last
+        # comment line; a leading blank line is valid YAML either way.
+        printf '\n' >> "$yaml"
+        {
+          printf 'tls_certificate_path: "/data/fed.crt"\n'
+          printf 'tls_private_key_path: "/data/fed.key"\n'
+          printf 'federation_verify_certificates: false\n'
+          printf 'ip_range_whitelist:\n'
+          printf '  - "172.30.7.0/24"\n'
+          printf 'trusted_key_servers: []\n'
+        } >> "$yaml"
+      fi
+
+      # `-p 127.0.0.1::8008` publishes on loopback only, on a port Docker
+      # chooses, so a run cannot collide with anything else on the machine and
+      # cannot be reached from off it.
+      #
+      # `--tmpfs /data` covers everything the server writes. The read-only
+      # binds carry the configuration in over that tmpfs: the file a bind
+      # mounts is never written by the server, so nothing about the run's only
+      # non-tmpfs state can move underneath it. In federated mode the
+      # certificate binds join them, and the container joins the per-run
+      # network under its server name -- the alias is how the sibling server
+      # resolves it.
+      run_args=(
+        -d
+        --name "$container"
+        --label "$CONTAINER_LABEL"
+        --label "$STARTED_LABEL=$STARTED_AT"
+        -p 127.0.0.1::8008
+        --tmpfs /data:rw,size=512m
+        -v "$yaml:/data/homeserver.yaml:ro"
+        -v "$WORKDIR/$log_config:/data/$log_config:ro"
+      )
+      if [ "$FEDERATED" = "1" ]; then
+        run_args+=(
+          --network "$NETWORK"
+          --network-alias "$server_name"
+          -v "$WORKDIR/fed-$which.crt:/data/fed.crt:ro"
+          -v "$WORKDIR/fed-$which.key:/data/fed.key:ro"
+        )
+      fi
+      docker run "${run_args[@]}" "$SYNAPSE_IMAGE" >/dev/null \
+        || fail "the homeserver container could not be started."
+    done
   else
     # --- continuwuity: image, pure-env configuration, container ------------
     #
@@ -571,27 +786,128 @@ $(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
     #
     # `--tmpfs` for the database: nothing this run creates should outlive it,
     # not even on disk.
-    docker run -d \
-      --name "$CONTAINER" \
-      --label "$CONTAINER_LABEL" \
-      --label "$STARTED_LABEL=$STARTED_AT" \
-      -p 127.0.0.1::8008 \
-      --tmpfs /db:rw,size=512m \
-      --entrypoint /sbin/conduwuit \
-      -e CONDUWUIT_SERVER_NAME="$SERVER_NAME" \
-      -e CONDUWUIT_DATABASE_PATH=/db \
-      -e CONDUWUIT_ADDRESS=0.0.0.0 \
-      -e CONDUWUIT_PORT=8008 \
-      -e CONDUWUIT_ALLOW_FEDERATION=false \
-      -e CONDUWUIT_ALLOW_REGISTRATION=false \
-      -e CONDUWUIT_ALLOW_CHECK_FOR_UPDATES=false \
-      "$CONTINUWUITY_IMAGE" \
-      --execute "users create-user $LOCALPART $PASSWORD" \
-      --execute "users create-user $LOCALPART_CHALLENGE $PASSWORD" \
-      --execute "users create-user $LOCALPART_SCANNED $PASSWORD" \
-      --execute "users create-user $LOCALPART_SCANNER $PASSWORD" \
-      --execute "users create-user $LOCALPART_SHOWN $PASSWORD" >/dev/null \
-      || fail "the homeserver container could not be started."
+    if [ "$FEDERATED" != "1" ]; then
+      docker run -d \
+        --name "$CONTAINER" \
+        --label "$CONTAINER_LABEL" \
+        --label "$STARTED_LABEL=$STARTED_AT" \
+        -p 127.0.0.1::8008 \
+        --tmpfs /db:rw,size=512m \
+        --entrypoint /sbin/conduwuit \
+        -e CONDUWUIT_SERVER_NAME="$SERVER_NAME_A" \
+        -e CONDUWUIT_DATABASE_PATH=/db \
+        -e CONDUWUIT_ADDRESS=0.0.0.0 \
+        -e CONDUWUIT_PORT=8008 \
+        -e CONDUWUIT_ALLOW_FEDERATION=false \
+        -e CONDUWUIT_ALLOW_REGISTRATION=false \
+        -e CONDUWUIT_ALLOW_CHECK_FOR_UPDATES=false \
+        "$CONTINUWUITY_IMAGE" \
+        --execute "users create-user $LOCALPART $PASSWORD" \
+        --execute "users create-user $LOCALPART_CHALLENGE $PASSWORD" \
+        --execute "users create-user $LOCALPART_SCANNED $PASSWORD" \
+        --execute "users create-user $LOCALPART_SCANNER $PASSWORD" \
+        --execute "users create-user $LOCALPART_SHOWN $PASSWORD" >/dev/null \
+        || fail "the homeserver container could not be started."
+    else
+      # --- continuwuity, federated: generated TOML, two containers -----------
+      #
+      # The single-container path above configures continuwuity purely
+      # through environment variables. The federated containers cannot:
+      # the TLS section is a nested table (`[global.tls]`), and figment's
+      # env provider has no reliable spelling for the port vector. A
+      # generated TOML bind, exactly the shape the synapse path already
+      # uses, keeps every knob this run relies on explicit; the
+      # unknown-key log check below vouches for the key names the same
+      # way it does for the env ones, because continuwuity logs an unknown
+      # key from a file exactly as it logs one from the environment.
+      #
+      # What the TOML changes relative to the env path above, and why:
+      #
+      #   * port = [8008, 8448] and [global.tls]: continuwuity terminates
+      #     TLS itself (there is no reverse proxy to lean on, on a network
+      #     of two), and it refuses to federate over plain HTTP. The 8008
+      #     listener keeps serving plain HTTP for the tests and the second
+      #     counterparty -- dual_protocol sniffs the first bytes and
+      #     accepts both -- while federation meets the sibling over TLS
+      #     on 8448, presenting the per-server self-signed certificate.
+      #   * allow_invalid_tls_certificates_... = true: continuwuity then
+      #     skips verifying the PEER's certificate for federation
+      #     requests, which is the knob the self-signed posture leans on.
+      #     The name is continuwuity's own; the source calls it hidden and
+      #     highly insecure, and both are true -- on any network that
+      #     outlives a run. Here it confines trust to the sibling
+      #     container.
+      #   * trusted_servers = []: the default is ["matrix.org"], and a
+      #     room join across federation consults those notary servers
+      #     first by default. This network has no route to matrix.org, so
+      #     the join would stall on a DNS timeout instead of asking the
+      #     sibling directly.
+      #   * ip_range_denylist = []: the default denies outbound requests
+      #     to RFC1918 ranges, which is where every docker network lives;
+      #     without emptying it the two servers cannot reach each other at
+      #     all. The denylist exists for abuse resistance on the open
+      #     internet, and this network is two containers on loopback.
+      for which in A B; do
+        if [ "$which" = "A" ]; then
+          container="$CONTAINER"
+        else
+          container="$CONTAINER_B"
+        fi
+        eval "server_name=\$SERVER_NAME_$which"
+        toml="$WORKDIR/continuwuity-$which.toml"
+        {
+          printf '[global]\n'
+          printf 'server_name = "%s"\n' "$server_name"
+          printf 'address = "0.0.0.0"\n'
+          printf 'port = [8008, 8448]\n'
+          printf 'database_path = "/db"\n'
+          printf 'allow_federation = true\n'
+          printf 'allow_registration = false\n'
+          printf 'allow_announcements_check = false\n'
+          printf 'trusted_servers = []\n'
+          printf 'ip_range_denylist = []\n'
+          printf 'allow_invalid_tls_certificates_yes_i_know_what_the_fuck_i_am_doing_with_this_and_i_know_this_is_insecure = true\n'
+          printf '\n'
+          printf '[global.tls]\n'
+          printf 'certs = "/data/fed.crt"\n'
+          printf 'key = "/data/fed.key"\n'
+          printf 'dual_protocol = true\n'
+        } > "$toml"
+
+        executes=(
+          --execute "users create-user $LOCALPART_FEDERATED $PASSWORD"
+        )
+        if [ "$which" = "A" ]; then
+          # Server A additionally owns the five accounts the existing
+          # proofs use, created exactly as in the single-container path.
+          executes=(
+            --execute "users create-user $LOCALPART $PASSWORD"
+            --execute "users create-user $LOCALPART_CHALLENGE $PASSWORD"
+            --execute "users create-user $LOCALPART_SCANNED $PASSWORD"
+            --execute "users create-user $LOCALPART_SCANNER $PASSWORD"
+            --execute "users create-user $LOCALPART_SHOWN $PASSWORD"
+            "${executes[@]}"
+          )
+        fi
+
+        docker run -d \
+          --name "$container" \
+          --label "$CONTAINER_LABEL" \
+          --label "$STARTED_LABEL=$STARTED_AT" \
+          --network "$NETWORK" \
+          --network-alias "$server_name" \
+          -p 127.0.0.1::8008 \
+          --tmpfs /db:rw,size=512m \
+          -v "$toml:/data/continuwuity.toml:ro" \
+          -v "$WORKDIR/fed-$which.crt:/data/fed.crt:ro" \
+          -v "$WORKDIR/fed-$which.key:/data/fed.key:ro" \
+          --entrypoint /sbin/conduwuit \
+          "$CONTINUWUITY_IMAGE" \
+          -c /data/continuwuity.toml \
+          "${executes[@]}" >/dev/null \
+          || fail "the homeserver container could not be started."
+      done
+    fi
   fi
 
   HOST_PORT=$(docker port "$CONTAINER" 8008/tcp 2>/dev/null | head -1 | sed 's/.*://')
@@ -599,14 +915,28 @@ $(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
     || { RUN_FAILED=1; fail "the container published no host port for 8008."; }
 
   export MATRIX_INTEROP_HOMESERVER="http://127.0.0.1:$HOST_PORT"
-  export MATRIX_INTEROP_USER="@$LOCALPART:$SERVER_NAME"
-  export MATRIX_INTEROP_CHALLENGE_USER="@$LOCALPART_CHALLENGE:$SERVER_NAME"
-  export MATRIX_INTEROP_SCANNED_USER="@$LOCALPART_SCANNED:$SERVER_NAME"
-  export MATRIX_INTEROP_SCANNER_USER="@$LOCALPART_SCANNER:$SERVER_NAME"
-  export MATRIX_INTEROP_SHOWN_USER="@$LOCALPART_SHOWN:$SERVER_NAME"
+  export MATRIX_INTEROP_USER="@$LOCALPART:$SERVER_NAME_A"
+  export MATRIX_INTEROP_CHALLENGE_USER="@$LOCALPART_CHALLENGE:$SERVER_NAME_A"
+  export MATRIX_INTEROP_SCANNED_USER="@$LOCALPART_SCANNED:$SERVER_NAME_A"
+  export MATRIX_INTEROP_SCANNER_USER="@$LOCALPART_SCANNER:$SERVER_NAME_A"
+  export MATRIX_INTEROP_SHOWN_USER="@$LOCALPART_SHOWN:$SERVER_NAME_A"
   export MATRIX_INTEROP_PASSWORD="$PASSWORD"
 
+  if [ "$FEDERATED" = "1" ]; then
+    # Server B's client API, for the second counterparty and the account
+    # creation below. Plain HTTP on the published port is right: only the
+    # federation leg between the containers is TLS.
+    HOST_PORT_B=$(docker port "$CONTAINER_B" 8008/tcp 2>/dev/null | head -1 | sed 's/.*://')
+    [ -n "$HOST_PORT_B" ] \
+      || { RUN_FAILED=1; fail "the second container published no host port for 8008."; }
+    export MATRIX_INTEROP_FEDERATED_HOMESERVER="http://127.0.0.1:$HOST_PORT_B"
+    export MATRIX_INTEROP_FEDERATED_USER="@$LOCALPART_FEDERATED:$SERVER_NAME_B"
+  fi
+
   echo "Homeserver: $MATRIX_INTEROP_HOMESERVER (container $CONTAINER, $HOMESERVER_IMPL)"
+  if [ "$FEDERATED" = "1" ]; then
+    echo "Federated:  $MATRIX_INTEROP_FEDERATED_HOMESERVER (container $CONTAINER_B, federating)"
+  fi
 
   if [ "$HOMESERVER_IMPL" = "synapse" ]; then
     # --- synapse: create the five accounts with registration closed --------
@@ -629,32 +959,36 @@ $(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
     # does, so what a failure dumps here is not redacted any further.
     #
     # The endpoint answers only once the server is actually up, so it is
-    # waited for the same bounded way the logins are waited for below.
-    register_ready=""
-    register_deadline=$(( $(date +%s) + HOMESERVER_TIMEOUT_SECONDS ))
-    while [ "$(date +%s)" -lt "$register_deadline" ]; do
-      if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; then
-        RUN_FAILED=1
-        fail "the homeserver container exited before it was ready."
-      fi
-      if curl -s -m 5 "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" \
-          | grep -q '"nonce"'; then
-        register_ready=1
-        break
-      fi
-      sleep 2
-    done
-    [ -n "$register_ready" ] || { RUN_FAILED=1; fail "the shared-secret
-      registration endpoint never answered within ${HOMESERVER_TIMEOUT_SECONDS}s.
-      Either the server did not finish starting, or it started without the
-      registration_shared_secret this script wrote into its configuration."; }
+    # waited for the same bounded way the logins are waited for below. The
+    # federated server's endpoint gets its own wait when there is one.
+    synapse_wait_register() {
+      local base="$1"
+      local container="$2"
+      local deadline=$(( $(date +%s) + HOMESERVER_TIMEOUT_SECONDS ))
+      while [ "$(date +%s)" -lt "$deadline" ]; do
+        if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+          RUN_FAILED=1
+          fail "the homeserver container exited before it was ready."
+        fi
+        if curl -s -m 5 "$base/_synapse/admin/v1/register" | grep -q '"nonce"'; then
+          return 0
+        fi
+        sleep 2
+      done
+      RUN_FAILED=1
+      fail "the shared-secret registration endpoint at $base never answered
+        within ${HOMESERVER_TIMEOUT_SECONDS}s. Either the server did not finish
+        starting, or it started without the registration_shared_secret this
+        script wrote into its configuration."
+    }
 
     synapse_create_user() {
-      local localpart="$1"
+      local base="$1"
+      local localpart="$2"
       local nonce mac response
       # A fresh nonce per account: synapse deletes a nonce when it is used,
-      # so one fetched here cannot be shared across the five calls.
-      nonce=$(curl -s -m 5 "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" \
+      # so one fetched here cannot be shared across the calls.
+      nonce=$(curl -s -m 5 "$base/_synapse/admin/v1/register" \
         | sed -n 's/.*"nonce":"\([^"]*\)".*/\1/p')
       [ -n "$nonce" ] || { RUN_FAILED=1; fail "the registration endpoint gave no
         nonce for '$localpart', though it answered moments ago."; }
@@ -664,7 +998,7 @@ $(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
       response=$(curl -s -m 5 -X POST \
         -H 'Content-Type: application/json' \
         --data-binary @- \
-        "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" <<JSON || true
+        "$base/_synapse/admin/v1/register" <<JSON || true
 {"nonce":"$nonce","username":"$localpart","password":"$PASSWORD","admin":false,"mac":"$mac"}
 JSON
 )
@@ -680,12 +1014,20 @@ JSON
       fi
     }
 
-    synapse_create_user "$LOCALPART"
-    synapse_create_user "$LOCALPART_CHALLENGE"
-    synapse_create_user "$LOCALPART_SCANNED"
-    synapse_create_user "$LOCALPART_SCANNER"
-    synapse_create_user "$LOCALPART_SHOWN"
+    synapse_wait_register "$MATRIX_INTEROP_HOMESERVER" "$CONTAINER"
+    synapse_create_user "$MATRIX_INTEROP_HOMESERVER" "$LOCALPART"
+    synapse_create_user "$MATRIX_INTEROP_HOMESERVER" "$LOCALPART_CHALLENGE"
+    synapse_create_user "$MATRIX_INTEROP_HOMESERVER" "$LOCALPART_SCANNED"
+    synapse_create_user "$MATRIX_INTEROP_HOMESERVER" "$LOCALPART_SCANNER"
+    synapse_create_user "$MATRIX_INTEROP_HOMESERVER" "$LOCALPART_SHOWN"
     echo "All five accounts the proofs need exist, created over the shared-secret endpoint."
+    if [ "$FEDERATED" = "1" ]; then
+      # Server B's account, over B's own endpoint and B's own published
+      # port. Both servers were configured with the same generated secret.
+      synapse_wait_register "$MATRIX_INTEROP_FEDERATED_HOMESERVER" "$CONTAINER_B"
+      synapse_create_user "$MATRIX_INTEROP_FEDERATED_HOMESERVER" "$LOCALPART_FEDERATED"
+      echo "The federated account the sixth proof needs exists on server B."
+    fi
   fi
 
   # Wait for the API, then for the account. These are two different facts and
@@ -700,17 +1042,19 @@ JSON
   # inside a test.
   wait_for_login() {
     local who="$1"
+    local base="${2:-$MATRIX_INTEROP_HOMESERVER}"
+    local container="${3:-$CONTAINER}"
     local deadline=$(( $(date +%s) + HOMESERVER_TIMEOUT_SECONDS ))
     local login token
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; then
+      if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
         RUN_FAILED=1
         fail "the homeserver container exited before it was ready."
       fi
       login=$(curl -s -m 5 -X POST \
         -H 'Content-Type: application/json' \
         --data-binary @- \
-        "$MATRIX_INTEROP_HOMESERVER/_matrix/client/v3/login" <<JSON || true
+        "$base/_matrix/client/v3/login" <<JSON || true
 {"type":"m.login.password",
  "identifier":{"type":"m.id.user","user":"$who"},
  "password":"$MATRIX_INTEROP_PASSWORD",
@@ -730,14 +1074,14 @@ JSON
           -H "Authorization: Bearer $token" \
           -H 'Content-Type: application/json' \
           -d '{}' \
-          "$MATRIX_INTEROP_HOMESERVER/_matrix/client/v3/logout" || true
+          "$base/_matrix/client/v3/logout" || true
         unset token
         return 0
       fi
       sleep 2
     done
     RUN_FAILED=1
-    fail "the homeserver never accepted a login as $who within
+    fail "the homeserver at $base never accepted a login as $who within
       ${HOMESERVER_TIMEOUT_SECONDS}s. Either it did not finish starting, or the
       account this script told it to create was not created."
   }
@@ -748,6 +1092,11 @@ JSON
   wait_for_login "$MATRIX_INTEROP_SCANNER_USER"
   wait_for_login "$MATRIX_INTEROP_SHOWN_USER"
   echo "Homeserver ready, and all five accounts it was told to create can log in."
+  if [ "$FEDERATED" = "1" ]; then
+    wait_for_login "$MATRIX_INTEROP_FEDERATED_USER" \
+      "$MATRIX_INTEROP_FEDERATED_HOMESERVER" "$CONTAINER_B"
+    echo "Server B ready, and the federated account it was told to create can log in."
+  fi
 
   # Continuwuity does not reject a configuration key it does not recognise. It
   # logs `Config parameter "x" is unknown to conduwuit, ignoring.` and starts
@@ -765,7 +1114,11 @@ JSON
   # Only the key names are reproduced, never the log line and never the log:
   # continuwuity echoes the generated password into its own startup output.
   if [ "$HOMESERVER_IMPL" = "continuwuity" ]; then
-    IGNORED=$(docker logs "$CONTAINER" 2>&1 \
+    check_containers="$CONTAINER"
+    if [ "$FEDERATED" = "1" ]; then
+      check_containers="$CONTAINER $CONTAINER_B"
+    fi
+    IGNORED=$(for c in $check_containers; do docker logs "$c" 2>&1; done \
       | sed -n 's/.*Config parameter "\([a-z_0-9]*\)" is unknown to conduwuit.*/\1/p' \
       | sort -u | tr '\n' ' ')
     if [ -n "$IGNORED" ]; then
@@ -873,7 +1226,8 @@ printf '%s\n' '{"op":"quit"}' | "$MATRIX_INTEROP_MAUTRIX_PARTY" \
 
 # --- 3. the tests ----------------------------------------------------------
 #
-# FIVE proofs, one homeserver. `level_two_interop` asks whether a third-party
+# FIVE proofs against one homeserver -- SIX, with FEDERATED=1, the last
+# against the pair. `level_two_interop` asks whether a third-party
 # client decrypts what this library encrypts; `level_two_verification` asks
 # whether one will complete a device verification with it; `level_two_identity`
 # asks what a decrypted event says about its sender once this library has a
@@ -1033,8 +1387,24 @@ run_proof level_two_scanned \
   1 \
   "this test spawns no child, so there is exactly one libtest process"
 
-echo
-echo "PASS: all five level 2 proofs."
+# The federated proof, only when this run stood up a second homeserver: three
+# devices across the two servers exchange encrypted events, with the third
+# device joining after the first message. It spawns no phase-two child --
+# what it proves happens between live devices -- but it does spawn TWO nio
+# counterparty subprocesses; they are not libtest, so they change no count
+# here. ONE of each.
+if [ "$FEDERATED" = "1" ]; then
+  run_proof level_two_federated \
+    three_devices_across_two_federating_homeservers \
+    1 \
+    "this test spawns no child, so there is exactly one libtest process"
+
+  echo
+  echo "PASS: all six level 2 proofs."
+else
+  echo
+  echo "PASS: all five level 2 proofs."
+fi
 echo "      A third-party matrix-nio client decrypted what this library encrypted,"
 echo "      and this library decrypted what matrix-nio sent."
 echo "      A verification matrix-nio opened was announced by this library, agreed"
@@ -1064,7 +1434,24 @@ echo "      SHOWS is accepted by that counterparty and does not then finish, bec
 echo "      it sends m.key.verification.done before the showing side has confirmed;"
 echo "      the fifth test measures that off the wire rather than asserting it."
 echo "      See rust/matrix-crypto-core/tests/level_two_scanned.rs."
+if [ "$FEDERATED" = "1" ]; then
+  echo "      Three devices across two federating $SERVER_NAME_A / $SERVER_NAME_B"
+  echo "      homeservers exchanged encrypted events, one device joining after the"
+  echo "      first message: /keys/query and /keys/claim resolved across federation,"
+  echo "      the room key reached the late joiner and the late joiner's key reached"
+  echo "      both pre-existing devices, the pre-join history stayed sealed to the"
+  echo "      late joiner -- the pinned, spec-compliant megolm behaviour -- and one"
+  echo "      corrupted ciphertext in the federated direction was refused by the"
+  echo "      ratchet. The sixth test says which behaviour is pinned in its header."
+  echo "      See rust/matrix-crypto-core/tests/level_two_federated.rs."
+fi
 if [ -n "$CONTAINER" ]; then
-  echo "      Proven against a throwaway $SERVER_NAME homeserver this script started"
-  echo "      and is about to destroy. No credential was read from anywhere."
+  if [ "$FEDERATED" = "1" ]; then
+    echo "      Proven against throwaway $SERVER_NAME_A and $SERVER_NAME_B"
+    echo "      homeservers this script started and is about to destroy. No"
+    echo "      credential was read from anywhere."
+  else
+    echo "      Proven against a throwaway $SERVER_NAME_A homeserver this script"
+    echo "      started and is about to destroy. No credential was read from anywhere."
+  fi
 fi

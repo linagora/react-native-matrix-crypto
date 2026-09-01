@@ -44,6 +44,7 @@ pub const HOMESERVER_ENV: &str = "MATRIX_INTEROP_HOMESERVER";
 pub const USER_ENV: &str = "MATRIX_INTEROP_USER";
 pub const PASSWORD_ENV: &str = "MATRIX_INTEROP_PASSWORD";
 pub const PYTHON_ENV: &str = "MATRIX_INTEROP_NIO_PYTHON";
+pub const NIO_STORE_ENV: &str = "MATRIX_INTEROP_NIO_STORE";
 
 /// Reads a required variable, naming it and never its value.
 pub fn required_env(name: &str) -> String {
@@ -537,13 +538,38 @@ pub struct NioParty {
 
 impl NioParty {
     pub fn start(python: &str, script: &std::path::Path, store_path: &std::path::Path) -> Self {
-        let mut child = Command::new(python)
-            .arg(script)
-            // The password reaches the subprocess by inheriting this
-            // process's environment, never on the command line: `ps` shows
-            // argv to every user on the machine and environments only to the
-            // owner.
-            .env("MATRIX_INTEROP_NIO_STORE", store_path)
+        Self::start_as(
+            python,
+            script,
+            &[(NIO_STORE_ENV, store_path.to_string_lossy().into_owned())],
+        )
+    }
+
+    /// The second counterparty child for the federated proof: the SAME
+    /// interpreter and script, but a DIFFERENT account on a DIFFERENT
+    /// homeserver, so this process must not read the first child's
+    /// `MATRIX_INTEROP_HOMESERVER`/`MATRIX_INTEROP_USER`/store. Each entry in
+    /// `env_overrides` replaces one variable in the child's environment; the
+    /// password is deliberately NOT overridable -- both accounts share the one
+    /// password, and it reaches the child by inheritance only, exactly as in
+    /// `start`. Why the second user is a nio subprocess at all, rather than a
+    /// second machine of this library, is `level_two_federated.rs`'s whole
+    /// header: the machine registry holds one machine per process.
+    pub fn start_as(
+        python: &str,
+        script: &std::path::Path,
+        env_overrides: &[(&str, String)],
+    ) -> Self {
+        let mut command = Command::new(python);
+        command.arg(script);
+        for (name, value) in env_overrides {
+            command.env(name, value);
+        }
+        // The password reaches the subprocess by inheriting this
+        // process's environment, never on the command line: `ps` shows
+        // argv to every user on the machine and environments only to the
+        // owner.
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

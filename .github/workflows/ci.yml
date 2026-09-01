@@ -633,18 +633,21 @@ jobs:
       - run: ./scripts/run-probe-on-simulator.sh /tmp/rnmc-probe-ios-derived/Build/Products/Release-iphonesimulator/ExampleApp.app
 
   interop-level-two:
-    # The job name carries which homeserver implementation this leg stands up:
-    # the proofs must pass against both Continuwuity and Synapse (issue #8),
-    # and the only difference between the two legs is HOMESERVER_IMPL, handed
+    # The job name carries which homeserver implementation this leg stands up
+    # and whether it additionally stands up a second, federating container
+    # for the federated proof (issue #7): the proofs must pass against both
+    # Continuwuity and Synapse (issue #8), single and federated, and the only
+    # differences between the legs are HOMESERVER_IMPL and FEDERATED, handed
     # to the script below.
-    name: interop-level-two (${{ matrix.impl }})
+    name: interop-level-two (${{ matrix.impl }}, federated=${{ matrix.fed }})
     strategy:
-      # One implementation failing must not cancel the other leg: a red
+      # One implementation failing must not cancel the other legs: a red
       # Synapse run alongside a green Continuwuity run is exactly the
       # comparison this matrix exists to produce.
       fail-fast: false
       matrix:
         impl: [continuwuity, synapse]
+        fed: [0, 1]
     # M2's final exit criterion (design doc section 8): a real Matrix client
     # decrypts what this library encrypted, and this library decrypts what it
     # sent, over a real homeserver -- with a one-character ciphertext
@@ -721,3 +724,4 @@ jobs:
       - run: ./scripts/run-level-two-interop.sh
         env:
           HOMESERVER_IMPL: ${{ matrix.impl }}
+          FEDERATED: ${{ matrix.fed }}
