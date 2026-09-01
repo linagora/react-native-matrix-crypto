@@ -558,6 +558,70 @@ jobs:
           # never on the absence of a FAIL line.
           script: ./scripts/run-probe-on-emulator.sh
 
+  probe-ios:
+    # The iOS twin of probe-android, and the first job that exercises this
+    # library end to end on iOS: until this job existed, ci.yml ran no iOS
+    # end to end leg at all, and the only iOS runtime evidence was a manual
+    # measurement script (scripts/measure-signal-latency-ios.sh) whose record
+    # lives outside this repository.
+    #
+    # The app side needs nothing iOS-specific: the probe harness prints
+    # PROBE_CHECK and PROBE_SUMMARY through console.log, which reaches the
+    # unified log at info level under subsystem com.facebook.react.log. What
+    # this leg reimplements is every piece of adb -- boot, install, launch,
+    # and a live `log stream` with a readiness beacon, because a booted
+    # simulator keeps no log archive to query after the fact.
+    #
+    # Cost is the reason this job arrived last: an hour of macos-15 per pull
+    # request, against minutes for the Android leg on ubuntu.
+    needs: gates
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.nvmrc', cache: yarn }
+      - run: yarn install --frozen-lockfile
+      # Same rule as probe-android: this leg rebuilds its own Rust slice
+      # rather than reusing build-ios output, because probe correctness must
+      # not depend on another leg's flags.
+      - run: rustup target add aarch64-apple-ios-sim
+      - name: Build the Rust slice for the simulator
+        run: |
+          cd packages/react-native-matrix-crypto
+          yarn exec ubrn -- build ios \
+            --config ../../ubrn.config.yaml \
+            --targets aarch64-apple-ios-sim \
+            --release
+      # Same reasoning as probe-android: gates ran on a different runner and
+      # cannot see the tree this build leaves behind.
+      - run: yarn gate:stubs
+      - name: Install pods
+        run: pod install --project-directory=packages/example-app/ios
+      - name: Build the example app for a simulator
+        # ARCHS=arm64 is load-bearing, not an optimisation: the slice this
+        # leg builds is aarch64-apple-ios-sim only, and a generic simulator
+        # destination also compiles x86_64, under which the [CP] Copy
+        # XCFrameworks phase finds no matching slice and the link fails on
+        # 'matrix_crypto_ffi' for both architectures. macos-15 runners are
+        # Apple Silicon, so arm64-only loses nothing.
+        run: |
+          xcodebuild \
+            -workspace packages/example-app/ios/ExampleApp.xcworkspace \
+            -scheme ExampleApp \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath /tmp/rnmc-probe-ios-derived \
+            CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
+            build
+      # The assertion lives in the script, not here, the same rule
+      # probe-android keeps: it can be run by hand against a local simulator
+      # exactly as CI runs it, and it asserts on the verbatim
+      # `PROBE_SUMMARY n/n` line rather than on an exit code.
+      - run: ./scripts/run-probe-on-simulator.sh /tmp/rnmc-probe-ios-derived/Build/Products/Release-iphonesimulator/ExampleApp.app
+
   interop-level-two:
     # M2's final exit criterion (design doc section 8): a real Matrix client
     # decrypts what this library encrypted, and this library decrypts what it
