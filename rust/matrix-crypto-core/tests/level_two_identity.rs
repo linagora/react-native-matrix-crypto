@@ -632,6 +632,26 @@ fn a_signing_identity_published_to_a_real_homeserver_and_what_a_sender_then_read
         );
     }
 
+    // A sync cursor, taken before either upload below lands. It exists for
+    // Synapse, and for the same reason `level_two_interop.rs` step 1 holds
+    // one: Synapse reports a device-list change only on an incremental sync,
+    // and only to a cursor that predates it. Either upload below changes
+    // this account's device list, and step 13 needs that change to be
+    // reportable so the machine re-queries the account and learns its own
+    // device is signed. Continuwuity reports the change on an initial sync
+    // and never reads this. The payload is not fed to the machine: it
+    // changes nothing the steps below do not establish on their own terms.
+    let before_upload = homeserver.ok(
+        "GET",
+        "/_matrix/client/v3/sync?timeout=0",
+        Some(&library.token),
+        None,
+    );
+    let cursor_before_upload = before_upload["next_batch"]
+        .as_str()
+        .expect("a /sync response carries a next_batch")
+        .to_string();
+
     for request in &batch {
         if request.kind == "signing_keys_upload" {
             // The one request this file sends by hand, because it is the one
@@ -909,19 +929,41 @@ fn a_signing_identity_published_to_a_real_homeserver_and_what_a_sender_then_read
     // same value the counterparty gets. The chain is load-bearing; this loop
     // makes its ordering explicit and independent of what step 12 happens to
     // do.
+    //
+    // The initial-sync-first shape of the loop is Continuwuity's. On Synapse
+    // an initial sync never carries `device_lists` at all, and step 12's
+    // cursor postdates the uploads, so after one fruitless pass the loop
+    // goes back to the cursor step 9 took before either upload landed --
+    // the only window from which Synapse reports the change -- and then
+    // chains incrementals off each payload's `next_batch`. Without that
+    // fallback this loop spins on Synapse's response cache until patience
+    // runs out, having learned nothing: measured, 2026-09-01.
     let mut queried_after_signing = false;
+    let mut probe_since: Option<String> = None;
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline && !queried_after_signing {
-        let sync = homeserver.ok(
-            "GET",
-            "/_matrix/client/v3/sync?timeout=0",
-            Some(&library.token),
-            None,
-        );
+        let query = match &probe_since {
+            Some(cursor) => format!(
+                "/_matrix/client/v3/sync?timeout=0&since={}",
+                encode_segment(cursor)
+            ),
+            None => "/_matrix/client/v3/sync?timeout=0".to_string(),
+        };
+        let sync = homeserver.ok("GET", &query, Some(&library.token), None);
         run(receive_sync_changes(&encryption_slice(&sync).to_string()))
             .expect("a real /sync payload must be accepted");
         let batch = pump_and_send(&homeserver, &library.token);
         queried_after_signing = !account_key_queries(&batch, &library.user_id).is_empty();
+        if !queried_after_signing {
+            probe_since = Some(if probe_since.is_none() {
+                cursor_before_upload.clone()
+            } else {
+                sync["next_batch"]
+                    .as_str()
+                    .expect("a /sync response carries a next_batch")
+                    .to_string()
+            });
+        }
     }
     assert!(
         queried_after_signing,

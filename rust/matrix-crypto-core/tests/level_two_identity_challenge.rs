@@ -176,24 +176,19 @@ const STORE_PASSPHRASE: &str = "level-two-identity-challenge";
 /// minting ours and publishing it. The header says what it stands for and
 /// why it is the one staged thing here.
 ///
-/// Deliberately not key-shaped, and English rather than random, so nothing
-/// here can be read as key material by a person or matched as a secret by a
-/// scanner. A published Ed25519 key is forty-three characters of base64 with
-/// the entropy to match; these are three words in camel case.
-///
-/// **The one constraint they do have to satisfy is the character set.** A
-/// cross-signing key id is `ed25519:<key>`, and ruma parses the second half
-/// as a base64 public key: continuwuity answers
-/// `400 M_INVALID_PARAM "Invalid master key"` when it does not deserialise,
-/// which is what a hyphen in one of these produced. Measured both ways --
-/// the values below are accepted, and the same values with a hyphen are
-/// refused. Length is not part of it: a length no base64 string can have was
-/// accepted, so it is the alphabet alone. Nothing else about these values is
-/// checked, by continuwuity or by this test, beyond their differing from what
-/// this library mints -- which anything that is not a real key satisfies.
-const OTHER_MASTER: &str = "StandInMasterKey";
-const OTHER_SELF_SIGNING: &str = "StandInSelfSignKey";
-const OTHER_USER_SIGNING: &str = "StandInUserSignKey";
+/// A real Ed25519 public key and nothing more: the base64 (unpadded, as a
+/// key id requires) of thirty-two bytes of 0x11. It is still deliberately
+/// not key material in the sense that matters -- no private half of it
+/// exists anywhere, so the identity can sign nothing and this run can leave
+/// nothing behind that works -- but the value itself has to parse as a
+/// public key now. Synapse deserialises the master key before storing it
+/// and answers `400 M_INVALID_PARAM "Invalid master key"` to anything that
+/// is not exactly thirty-two bytes of base64 (measured, 2026-09-01, against
+/// v1.159.0); earlier values that merely satisfied the base64 alphabet were
+/// accepted by continuwuity and refused by Synapse. The only other
+/// constraint is the one this test has always had: the value must differ
+/// from what this library mints, which a fixed never-used key satisfies.
+const OTHER_MASTER: &str = "ERERERERERERERERERERERERERERERERERERERERERE";
 
 /// One `/keys/query` for this account, asked of the homeserver directly.
 ///
@@ -347,21 +342,20 @@ fn a_signing_keys_upload_refused_by_a_real_challenge_answered_and_published() {
     //
     // Accepted without a challenge because the account holds no key yet,
     // which is the same MSC3967 rule that is about to refuse ours.
+    //
+    // Only the master key is staged, and that is Synapse's doing, measured
+    // against v1.159.0: it validates what this endpoint stores, and the two
+    // subordinate keys are each required to carry a signature from the
+    // master key -- which a stand-in that exists to occupy the account
+    // cannot produce, because no private half of it exists. Synapse accepts
+    // a master key alone, and a master key alone is all this step needs:
+    // what makes our upload below a replacement, and so challengeable, is
+    // that the account holds a master key at all.
     let other = json!({
         "master_key": {
             "user_id": library.user_id,
             "usage": ["master"],
             "keys": { format!("ed25519:{OTHER_MASTER}"): OTHER_MASTER },
-        },
-        "self_signing_key": {
-            "user_id": library.user_id,
-            "usage": ["self_signing"],
-            "keys": { format!("ed25519:{OTHER_SELF_SIGNING}"): OTHER_SELF_SIGNING },
-        },
-        "user_signing_key": {
-            "user_id": library.user_id,
-            "usage": ["user_signing"],
-            "keys": { format!("ed25519:{OTHER_USER_SIGNING}"): OTHER_USER_SIGNING },
         },
     })
     .to_string();

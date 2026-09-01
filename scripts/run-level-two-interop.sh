@@ -47,6 +47,12 @@ set -euo pipefail
 # runs locally and what stands behind the milestone's headline claim are the
 # same code path rather than two things that look alike.
 #
+#   HOMESERVER_IMPL=synapse ./scripts/run-level-two-interop.sh
+#
+# runs the same five proofs against a throwaway Synapse instead of the default
+# throwaway Continuwuity; see the image pins below for what each one is and
+# what its bring-up costs. Every other line of this header applies to both.
+#
 # WHY A THROWAWAY HOMESERVER RATHER THAN CI SECRETS
 #
 # The alternative was a secret in this public repository's CI pointing at a
@@ -108,22 +114,46 @@ set -euo pipefail
 # --- what a run is made of -------------------------------------------------
 
 # Pinned by digest, not by tag: a tag is a mutable pointer, and "the job runs
-# whatever that name points at today" is not a repeatable proof. This is the
-# multi-architecture index for v26.7.2, so the same line works on a linux/amd64
-# CI runner and on an arm64 developer machine.
+# whatever that name points at today" is not a repeatable proof. Both pins
+# below are multi-architecture indexes, so the same line works on a
+# linux/amd64 CI runner and on an arm64 developer machine.
 #
-# Continuwuity rather than Synapse, and the reason is in the test rather than
-# in taste. Step 5 asserts that the homeserver's own *initial* `/sync` reports
-# this account in `device_lists.changed`, because that is what makes the
-# `receiveSyncChanges` assertion a test of the library rather than of a query
-# the machine was going to make anyway. Continuwuity reports it; Synapse
-# populates `device_lists` only on incremental syncs, so the same test would
-# fail there for a reason that has nothing to do with this library.
-# Continuwuity is also what this project's own infrastructure runs and what
-# the test was originally proven against (task-12-report.md), it boots in
-# about two seconds, and its image is 128 MB with no database server to bring
-# up alongside it.
+# Two homeserver implementations can stand behind these proofs, selected by
+# HOMESERVER_IMPL further down. Neither is a stand-in for the other, and the
+# proofs depend on nothing either of them does specifically:
+# `level_two_interop`'s step 5 used to assert a fact about the *initial*
+# /sync -- which Continuwuity reports and Synapse does not, Synapse populates
+# `device_lists` only on incremental syncs -- so that assertion now loops
+# until the account appears and both implementations pass it. The comment at
+# that assertion in rust/matrix-crypto-core/tests/level_two_interop.rs has
+# the whole of it.
+#
+# Continuwuity is the default. It is what this project's own infrastructure
+# runs and what the test was originally proven against (task-12-report.md),
+# it boots in about two seconds, its image is 128 MB with no database server
+# to bring up alongside it, and it can be configured purely through
+# environment variables -- which keeps its bring-up a single `docker run`.
+# This is the multi-architecture index for v26.7.2.
 CONTINUWUITY_IMAGE=${CONTINUWUITY_IMAGE:-forgejo.ellis.link/continuwuation/continuwuity@sha256:b5f5d7454a3e8dda041fc82084088409f2c34905ff51274955d52050203a87af}
+
+# Synapse is the reference implementation and the other server family a real
+# deployment is likely to run, which is why the proofs also stand behind it
+# (issue #8). Its bring-up is heavier than Continuwuity's: the official image
+# cannot be configured purely through environment variables, so the synapse
+# path below runs the image's documented `generate` step and edits the
+# generated homeserver.yaml, and account creation with registration closed
+# goes over the shared-secret registration endpoint rather than Continuwuity's
+# `--execute`. This is the multi-architecture index for v1.159.0, the current
+# stable release at the time of pinning (v1.160.0 was still a release
+# candidate).
+SYNAPSE_IMAGE=${SYNAPSE_IMAGE:-docker.io/matrixdotorg/synapse@sha256:edf259d2b575b669a3e81024918ab8d5cfb7d2fba5a53c9e09695f1abc5645cb}
+
+# Which implementation the throwaway container runs: continuwuity (the
+# default) or synapse. Anything else is refused before anything is started,
+# because a typo silently selecting the server a proof runs against is the
+# kind of check-shaped hole this repository keeps finding. The manual path
+# (MATRIX_INTEROP_HOMESERVER) starts no container, so it is unaffected.
+HOMESERVER_IMPL=${HOMESERVER_IMPL:-continuwuity}
 
 # The homeserver's `server_name`, which is also the domain half of the MXID.
 # `localhost` is legal, needs no DNS and no certificate, and cannot be
@@ -336,71 +366,233 @@ EOF
     echo "::add-mask::$PASSWORD"
   fi
 
-  # Pulled explicitly, with retries, rather than left to `docker run`. The
-  # image is published only from continuwuity's own Forgejo instance -- there
-  # is no ghcr.io or Docker Hub mirror, checked -- so this job depends on one
-  # third-party host being up. That is a real dependency and it is named here
-  # rather than discovered as an unexplained failure: three attempts, and a
-  # message that says which host did not answer.
-  PULLED=""
-  for attempt in 1 2 3; do
-    if docker image inspect "$CONTINUWUITY_IMAGE" >/dev/null 2>&1; then
-      PULLED=1
-      break
+  case "$HOMESERVER_IMPL" in
+    continuwuity | synapse) ;;
+    *) fail "HOMESERVER_IMPL must be 'continuwuity' or 'synapse', not '$HOMESERVER_IMPL'.
+      The two bring-ups below are different code and assert different things
+      about their server; a value that fell through to one of them would be a
+      run that proved something other than what was asked for." ;;
+  esac
+
+  STARTED_AT=$(date +%s)
+  CONTAINER="rnmc-level-two-$$-$STARTED_AT"
+
+  if [ "$HOMESERVER_IMPL" = "synapse" ]; then
+    # --- synapse: image, generated configuration, container ----------------
+    #
+    # Pulled explicitly, with retries, rather than left to `docker run`, the
+    # same rule the continuwuity pull follows below: a dependency this job has
+    # is named here rather than discovered as an unexplained failure. Docker
+    # Hub is the image's own registry -- there is no third-party mirror
+    # involved the way there is with continuwuity's forgejo.
+    PULLED=""
+    for attempt in 1 2 3; do
+      if docker image inspect "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
+        PULLED=1
+        break
+      fi
+      echo "Pulling the homeserver image (attempt $attempt)..."
+      if docker pull --quiet "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
+        PULLED=1
+        break
+      fi
+      sleep $(( attempt * 5 ))
+    done
+    [ -n "$PULLED" ] || fail "could not pull $SYNAPSE_IMAGE after three attempts.
+      Docker Hub is the image's own registry. If it is down, this job cannot
+      run, and that is a dependency rather than a defect in this library."
+
+    # Synapse cannot be configured purely through environment variables the
+    # way continuwuity can: the official image expects a homeserver.yaml, and
+    # the documented way to produce one is the image's own `generate` step.
+    # What runs below is that generated file with exactly the deliberate
+    # changes this script documents -- not a configuration invented here.
+    #
+    # The generate step writes into /data, which for a throwaway server must
+    # be a tmpfs. A stopped container's tmpfs cannot be read back with
+    # `docker cp` -- checked: a tmpfs mount never reaches the container's
+    # filesystem layers, so cp reports the generated file absent -- so the
+    # generation runs inside a short-lived container kept alive on `sleep`
+    # while `docker exec` drives the image's own /start.py, and the two files
+    # the run needs are copied out with `docker exec cat` before it is
+    # removed. Everything the server then writes -- the sqlite database, the
+    # media store, the signing key it regenerates because the generated one
+    # died with the generation container's tmpfs -- lands in the run
+    # container's own fresh tmpfs and dies with it.
+    docker run -d \
+      --name "$CONTAINER-generate" \
+      --entrypoint /bin/sleep \
+      --tmpfs /data:rw,size=512m \
+      "$SYNAPSE_IMAGE" infinity >/dev/null \
+      || fail "the configuration container could not be started."
+    if ! docker exec \
+        -e SYNAPSE_SERVER_NAME="$SERVER_NAME" \
+        -e SYNAPSE_REPORT_STATS=no \
+        "$CONTAINER-generate" /start.py generate >/dev/null 2>&1; then
+      RUN_FAILED=1
+      fail "synapse could not generate its configuration. The container said:
+$(docker logs "$CONTAINER-generate" 2>&1 | tail -20 || true)"
     fi
-    echo "Pulling the homeserver image (attempt $attempt)..."
-    if docker pull --quiet "$CONTINUWUITY_IMAGE" >/dev/null 2>&1; then
-      PULLED=1
-      break
+    docker exec "$CONTAINER-generate" cat /data/homeserver.yaml \
+        > "$WORKDIR/homeserver.yaml" 2>/dev/null \
+      || { RUN_FAILED=1; fail "the generated homeserver.yaml could not be read
+      out of the configuration container."; }
+    docker exec "$CONTAINER-generate" cat /data/localhost.log.config \
+        > "$WORKDIR/localhost.log.config" 2>/dev/null \
+      || { RUN_FAILED=1; fail "the generated log configuration could not be read
+      out of the configuration container."; }
+    docker rm -f "$CONTAINER-generate" >/dev/null 2>&1 || true
+
+    # Two deliberate changes to the image's own template, both appended at
+    # the end of the file:
+    #
+    #   * registration_shared_secret, first removed and then set to a value
+    #     generated for this run. The template already carries a random one,
+    #     but it is never shown to anything, and parsing YAML back out is more
+    #     fragile than writing a value this script chose. The shared-secret
+    #     endpoint below is how the five accounts are created with
+    #     registration closed, which makes this secret the run's second
+    #     credential: it is masked like the password and never appears on a
+    #     command line, existing only in this file and inside the one
+    #     `openssl dgst` pipeline that computes a MAC with it.
+    #   * enable_registration: false, stated even though false is already
+    #     synapse's default, because the posture of this run -- registration
+    #     is closed and every account came from the endpoint -- is asserted
+    #     here rather than assumed from a default.
+    #
+    # Everything else the proofs rely on is left exactly as `generate` wrote
+    # it, and synapse's own strictness vouches for it: unlike continuwuity,
+    # synapse REFUSES to start on a configuration key it does not recognise,
+    # so a renamed or misspelled setting dies at startup with the key named
+    # (see the check the continuwuity path needs below for the contrast). The
+    # listener on 8008 has no bind_addresses, which synapse/config/server.py
+    # fills with every interface including 0.0.0.0; the database is sqlite at
+    # /data/homeserver.db, which the run container's tmpfs covers; and
+    # report_stats is false because SYNAPSE_REPORT_STATS=no said so above.
+    # Federation is left on, as the image ships it: the published port is
+    # loopback-only, so nothing off the machine can reach it either way --
+    # the same posture the continuwuity path sets with ALLOW_FEDERATION=false.
+    grep -q '^registration_shared_secret:' "$WORKDIR/homeserver.yaml" \
+      || fail "the generated homeserver.yaml carries no registration_shared_secret
+      line -- the image's template changed, and the account creation below
+      would be inventing a secret the server does not hold."
+    REGISTRATION_SECRET=$(openssl rand -hex 24)
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+      echo "::add-mask::$REGISTRATION_SECRET"
     fi
-    sleep $(( attempt * 5 ))
-  done
-  [ -n "$PULLED" ] || fail "could not pull $CONTINUWUITY_IMAGE after three attempts.
+    grep -v '^registration_shared_secret:' "$WORKDIR/homeserver.yaml" \
+      > "$WORKDIR/homeserver.yaml.new"
+    mv "$WORKDIR/homeserver.yaml.new" "$WORKDIR/homeserver.yaml"
+    {
+      printf 'registration_shared_secret: "%s"\n' "$REGISTRATION_SECRET"
+      printf 'enable_registration: false\n'
+      # Login rate limiting, effectively off for this throwaway server.
+      # Synapse's default rc_login allows a burst of five logins from one
+      # address and then one more every six seconds; a single run of these
+      # proofs logs in far more often than that -- five readiness probes
+      # below, then a login per test and per phase-two child -- and the
+      # sixth rapid login is refused with 429, which the harness reads as a
+      # credential failure. Brute-force protection means nothing on a
+      # loopback-only server whose accounts and password die with the
+      # container, and continuwuity imposes no such limit, so the two
+      # implementations are held to the same posture here.
+      printf 'rc_login:\n'
+      printf '  address:\n'
+      printf '    per_second: 1000000\n'
+      printf '    burst_count: 1000000\n'
+      printf '  account:\n'
+      printf '    per_second: 1000000\n'
+      printf '    burst_count: 1000000\n'
+      printf '  failed_attempts:\n'
+      printf '    per_second: 1000000\n'
+      printf '    burst_count: 1000000\n'
+    } >> "$WORKDIR/homeserver.yaml"
+
+    # `-p 127.0.0.1::8008` publishes on loopback only, on a port Docker
+    # chooses, so a run cannot collide with anything else on the machine and
+    # cannot be reached from off it.
+    #
+    # `--tmpfs /data` covers everything the server writes. The two read-only
+    # binds carry the configuration in over that tmpfs: the file a bind
+    # mounts is never written by the server, so nothing about the run's only
+    # non-tmpfs state can move underneath it.
+    docker run -d \
+      --name "$CONTAINER" \
+      --label "$CONTAINER_LABEL" \
+      --label "$STARTED_LABEL=$STARTED_AT" \
+      -p 127.0.0.1::8008 \
+      --tmpfs /data:rw,size=512m \
+      -v "$WORKDIR/homeserver.yaml:/data/homeserver.yaml:ro" \
+      -v "$WORKDIR/localhost.log.config:/data/localhost.log.config:ro" \
+      "$SYNAPSE_IMAGE" >/dev/null \
+      || fail "the homeserver container could not be started."
+  else
+    # --- continuwuity: image, pure-env configuration, container ------------
+    #
+    # Pulled explicitly, with retries, rather than left to `docker run`. The
+    # image is published only from continuwuity's own Forgejo instance -- there
+    # is no ghcr.io or Docker Hub mirror, checked -- so this job depends on one
+    # third-party host being up. That is a real dependency and it is named here
+    # rather than discovered as an unexplained failure: three attempts, and a
+    # message that says which host did not answer.
+    PULLED=""
+    for attempt in 1 2 3; do
+      if docker image inspect "$CONTINUWUITY_IMAGE" >/dev/null 2>&1; then
+        PULLED=1
+        break
+      fi
+      echo "Pulling the homeserver image (attempt $attempt)..."
+      if docker pull --quiet "$CONTINUWUITY_IMAGE" >/dev/null 2>&1; then
+        PULLED=1
+        break
+      fi
+      sleep $(( attempt * 5 ))
+    done
+    [ -n "$PULLED" ] || fail "could not pull $CONTINUWUITY_IMAGE after three attempts.
       Continuwuity publishes only to its own registry (forgejo.ellis.link);
       there is no ghcr.io or Docker Hub mirror. If that host is down, this
       job cannot run, and that is a dependency rather than a defect in this
       library."
 
-  STARTED_AT=$(date +%s)
-  CONTAINER="rnmc-level-two-$$-$STARTED_AT"
-  # `--entrypoint` because the image declares the binary as CMD with no
-  # ENTRYPOINT, so bare arguments would replace it rather than be passed to
-  # it.
-  #
-  # `--execute` runs one admin console command after startup. That is what
-  # creates the account, and it is why registration is left disabled: the
-  # first account on a fresh continuwuity cannot be registered over the
-  # client API without the one-time bootstrap token the server generates and
-  # prints, and scraping a credential out of a log to feed it back in is both
-  # brittle and the opposite of what this script is for.
-  #
-  # `-p 127.0.0.1::8008` publishes on loopback only, on a port Docker
-  # chooses, so a run cannot collide with anything else on the machine and
-  # cannot be reached from off it.
-  #
-  # `--tmpfs` for the database: nothing this run creates should outlive it,
-  # not even on disk.
-  docker run -d \
-    --name "$CONTAINER" \
-    --label "$CONTAINER_LABEL" \
-    --label "$STARTED_LABEL=$STARTED_AT" \
-    -p 127.0.0.1::8008 \
-    --tmpfs /db:rw,size=512m \
-    --entrypoint /sbin/conduwuit \
-    -e CONDUWUIT_SERVER_NAME="$SERVER_NAME" \
-    -e CONDUWUIT_DATABASE_PATH=/db \
-    -e CONDUWUIT_ADDRESS=0.0.0.0 \
-    -e CONDUWUIT_PORT=8008 \
-    -e CONDUWUIT_ALLOW_FEDERATION=false \
-    -e CONDUWUIT_ALLOW_REGISTRATION=false \
-    -e CONDUWUIT_ALLOW_CHECK_FOR_UPDATES=false \
-    "$CONTINUWUITY_IMAGE" \
-    --execute "users create-user $LOCALPART $PASSWORD" \
-    --execute "users create-user $LOCALPART_CHALLENGE $PASSWORD" \
-    --execute "users create-user $LOCALPART_SCANNED $PASSWORD" \
-    --execute "users create-user $LOCALPART_SCANNER $PASSWORD" \
-    --execute "users create-user $LOCALPART_SHOWN $PASSWORD" >/dev/null \
-    || fail "the homeserver container could not be started."
+    # `--entrypoint` because the image declares the binary as CMD with no
+    # ENTRYPOINT, so bare arguments would replace it rather than be passed to
+    # it.
+    #
+    # `--execute` runs one admin console command after startup. That is what
+    # creates the account, and it is why registration is left disabled: the
+    # first account on a fresh continuwuity cannot be registered over the
+    # client API without the one-time bootstrap token the server generates and
+    # prints, and scraping a credential out of a log to feed it back in is both
+    # brittle and the opposite of what this script is for.
+    #
+    # `-p 127.0.0.1::8008` publishes on loopback only, on a port Docker
+    # chooses, so a run cannot collide with anything else on the machine and
+    # cannot be reached from off it.
+    #
+    # `--tmpfs` for the database: nothing this run creates should outlive it,
+    # not even on disk.
+    docker run -d \
+      --name "$CONTAINER" \
+      --label "$CONTAINER_LABEL" \
+      --label "$STARTED_LABEL=$STARTED_AT" \
+      -p 127.0.0.1::8008 \
+      --tmpfs /db:rw,size=512m \
+      --entrypoint /sbin/conduwuit \
+      -e CONDUWUIT_SERVER_NAME="$SERVER_NAME" \
+      -e CONDUWUIT_DATABASE_PATH=/db \
+      -e CONDUWUIT_ADDRESS=0.0.0.0 \
+      -e CONDUWUIT_PORT=8008 \
+      -e CONDUWUIT_ALLOW_FEDERATION=false \
+      -e CONDUWUIT_ALLOW_REGISTRATION=false \
+      -e CONDUWUIT_ALLOW_CHECK_FOR_UPDATES=false \
+      "$CONTINUWUITY_IMAGE" \
+      --execute "users create-user $LOCALPART $PASSWORD" \
+      --execute "users create-user $LOCALPART_CHALLENGE $PASSWORD" \
+      --execute "users create-user $LOCALPART_SCANNED $PASSWORD" \
+      --execute "users create-user $LOCALPART_SCANNER $PASSWORD" \
+      --execute "users create-user $LOCALPART_SHOWN $PASSWORD" >/dev/null \
+      || fail "the homeserver container could not be started."
+  fi
 
   HOST_PORT=$(docker port "$CONTAINER" 8008/tcp 2>/dev/null | head -1 | sed 's/.*://')
   [ -n "$HOST_PORT" ] \
@@ -414,7 +606,87 @@ EOF
   export MATRIX_INTEROP_SHOWN_USER="@$LOCALPART_SHOWN:$SERVER_NAME"
   export MATRIX_INTEROP_PASSWORD="$PASSWORD"
 
-  echo "Homeserver: $MATRIX_INTEROP_HOMESERVER (container $CONTAINER)"
+  echo "Homeserver: $MATRIX_INTEROP_HOMESERVER (container $CONTAINER, $HOMESERVER_IMPL)"
+
+  if [ "$HOMESERVER_IMPL" = "synapse" ]; then
+    # --- synapse: create the five accounts with registration closed --------
+    #
+    # Continuwuity creates its accounts in the same `docker run` that starts
+    # it (`--execute` above). Synapse has no equivalent, and registration is
+    # closed, so the accounts are created over the admin API with the
+    # registration_shared_secret this run generated: GET the endpoint for a
+    # nonce, then POST the username, password and admin=false with a MAC --
+    # HMAC-SHA1, hex digest, over nonce\0user\0pass\0notadmin, the exact
+    # construction synapse/rest/admin/users.py checks against (read at
+    # v1.159.0; it is the literal strings "admin"/"notadmin", not "yes"/"no").
+    # No admin account is needed or created.
+    #
+    # Refusing to pass having created nothing, the same rule the continuwuity
+    # path keeps through wait_for_login below: any error from the endpoint
+    # fails the run here, with the server's answer, rather than surfacing
+    # several minutes later as five login failures inside the tests. Synapse
+    # does not echo the password into its own output the way continuwuity
+    # does, so what a failure dumps here is not redacted any further.
+    #
+    # The endpoint answers only once the server is actually up, so it is
+    # waited for the same bounded way the logins are waited for below.
+    register_ready=""
+    register_deadline=$(( $(date +%s) + HOMESERVER_TIMEOUT_SECONDS ))
+    while [ "$(date +%s)" -lt "$register_deadline" ]; do
+      if ! docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true; then
+        RUN_FAILED=1
+        fail "the homeserver container exited before it was ready."
+      fi
+      if curl -s -m 5 "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" \
+          | grep -q '"nonce"'; then
+        register_ready=1
+        break
+      fi
+      sleep 2
+    done
+    [ -n "$register_ready" ] || { RUN_FAILED=1; fail "the shared-secret
+      registration endpoint never answered within ${HOMESERVER_TIMEOUT_SECONDS}s.
+      Either the server did not finish starting, or it started without the
+      registration_shared_secret this script wrote into its configuration."; }
+
+    synapse_create_user() {
+      local localpart="$1"
+      local nonce mac response
+      # A fresh nonce per account: synapse deletes a nonce when it is used,
+      # so one fetched here cannot be shared across the five calls.
+      nonce=$(curl -s -m 5 "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" \
+        | sed -n 's/.*"nonce":"\([^"]*\)".*/\1/p')
+      [ -n "$nonce" ] || { RUN_FAILED=1; fail "the registration endpoint gave no
+        nonce for '$localpart', though it answered moments ago."; }
+      mac=$(printf '%s\0%s\0%s\0notadmin' "$nonce" "$localpart" "$PASSWORD" \
+        | openssl dgst -sha1 -hmac "$REGISTRATION_SECRET" -hex \
+        | sed 's/^.* //')
+      response=$(curl -s -m 5 -X POST \
+        -H 'Content-Type: application/json' \
+        --data-binary @- \
+        "$MATRIX_INTEROP_HOMESERVER/_synapse/admin/v1/register" <<JSON || true
+{"nonce":"$nonce","username":"$localpart","password":"$PASSWORD","admin":false,"mac":"$mac"}
+JSON
+)
+      # Matched on the field name, the same way wait_for_login matches a
+      # login: the access token in the response is a live credential and is
+      # not what this check is about.
+      if ! printf '%s' "$response" | grep -q '"access_token"'; then
+        RUN_FAILED=1
+        fail "synapse refused to create the account '$localpart' over its
+      shared-secret registration endpoint. With registration closed the
+      account cannot exist any other way, and a run that would log in as
+      nothing proves nothing. The endpoint answered: ${response:-no response}"
+      fi
+    }
+
+    synapse_create_user "$LOCALPART"
+    synapse_create_user "$LOCALPART_CHALLENGE"
+    synapse_create_user "$LOCALPART_SCANNED"
+    synapse_create_user "$LOCALPART_SCANNER"
+    synapse_create_user "$LOCALPART_SHOWN"
+    echo "All five accounts the proofs need exist, created over the shared-secret endpoint."
+  fi
 
   # Wait for the API, then for the account. These are two different facts and
   # the second is the one that matters: `--execute` runs asynchronously after
@@ -485,17 +757,24 @@ JSON
   # looks applied and is not is exactly the shape of defect this repository
   # keeps finding, so it is checked rather than assumed.
   #
+  # The synapse path has no equivalent check because it needs none: Synapse
+  # REFUSES to start on a key it does not recognise, so a renamed or
+  # misspelled setting there dies at startup with the key named in the log --
+  # this check's whole purpose, achieved by the server itself.
+  #
   # Only the key names are reproduced, never the log line and never the log:
   # continuwuity echoes the generated password into its own startup output.
-  IGNORED=$(docker logs "$CONTAINER" 2>&1 \
-    | sed -n 's/.*Config parameter "\([a-z_0-9]*\)" is unknown to conduwuit.*/\1/p' \
-    | sort -u | tr '\n' ' ')
-  if [ -n "$IGNORED" ]; then
-    RUN_FAILED=1
-    fail "the homeserver ignored configuration this script relies on: $IGNORED
-      Continuwuity warns and carries on rather than refusing to start, so these
-      settings did nothing. Either the image moved and the keys were renamed, or
-      one is misspelled above. Fix the names rather than the assertion."
+  if [ "$HOMESERVER_IMPL" = "continuwuity" ]; then
+    IGNORED=$(docker logs "$CONTAINER" 2>&1 \
+      | sed -n 's/.*Config parameter "\([a-z_0-9]*\)" is unknown to conduwuit.*/\1/p' \
+      | sort -u | tr '\n' ' ')
+    if [ -n "$IGNORED" ]; then
+      RUN_FAILED=1
+      fail "the homeserver ignored configuration this script relies on: $IGNORED
+        Continuwuity warns and carries on rather than refusing to start, so these
+        settings did nothing. Either the image moved and the keys were renamed, or
+        one is misspelled above. Fix the names rather than the assertion."
+    fi
   fi
 fi
 

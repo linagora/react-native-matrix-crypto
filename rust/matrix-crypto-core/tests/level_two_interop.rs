@@ -196,6 +196,32 @@ fn level_two_interoperability_over_a_real_homeserver() {
     // ---- 1. The library's device --------------------------------------
     let library = login(&homeserver, &user, &password, "level-two-interop-library");
 
+    // A sync cursor, taken before anything else exists on this account. It
+    // exists for Synapse, and the reason is a gap in what Synapse reports:
+    // it populates `device_lists` only on incremental syncs, and only with
+    // changes that postdate the sync cursor -- a change that happened before
+    // a device's first /sync is never reported to that device at all.
+    // Step 5 needs "the server eventually tells us this account's device
+    // list changed" to be a real event on Synapse too, and every device-list
+    // change this run will ever make -- the counterparty's device appearing,
+    // this machine's keys reaching the wire -- happens after this point and
+    // before step 5's own first sync, which is one cursor too late to ever
+    // see them. Holding a cursor from here makes them reportable; step 5's
+    // loop reaches back to it after a fruitless initial sync. Continuwuity
+    // reports the change on the initial sync regardless and never reads it.
+    // The payload itself is not fed to the machine: there is nothing in it
+    // for step 5 to assert a consequence of.
+    let before_anything = homeserver.ok(
+        "GET",
+        "/_matrix/client/v3/sync?timeout=0",
+        Some(&library.token),
+        None,
+    );
+    let cursor_before_anything = before_anything["next_batch"]
+        .as_str()
+        .expect("a /sync response carries a next_batch")
+        .to_string();
+
     // Declared here, before anything else exists on the homeserver, and
     // *before* `nio` below, so that on an unwind `nio`'s own `Drop` kills the
     // subprocess first and this one then removes what the run created. Every
@@ -320,21 +346,67 @@ fn level_two_interoperability_over_a_real_homeserver() {
     // documentation warns that a wrongly-cased payload parses fine and
     // teaches the machine nothing. So this asserts on a consequence, never
     // on the call resolving.
-    let initial_sync = homeserver.ok(
-        "GET",
-        "/_matrix/client/v3/sync?timeout=0",
-        Some(&library.token),
-        None,
-    );
-    let changed: Vec<&str> = initial_sync["device_lists"]["changed"]
-        .as_array()
-        .map(|users| users.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+    //
+    // Synapse and Continuwuity report a new device's `device_lists.changed`
+    // differently: Continuwuity puts it in the account's initial /sync
+    // payload, Synapse only in a later incremental one -- and Synapse only
+    // reports changes that postdate the sync cursor, which is why step 1
+    // took one before anything existed. What this step needs is "the server
+    // eventually tells us this account's device list changed" -- that is
+    // what makes the `receiveSyncChanges` assertion a test of the library
+    // rather than of a query the machine was going to make anyway, and it
+    // does not care which payload carried the news. So this syncs in a
+    // bounded loop -- the initial sync, then incrementals -- until the
+    // account appears, and fails after a fixed number of attempts. The
+    // first incremental after a fruitless initial sync goes back to
+    // `cursor_before_anything` rather than chaining off the initial sync's
+    // `next_batch`: on Synapse the initial sync's cursor already postdates
+    // every change this run will make, and a cursor from before any of them
+    // is the only place the news can surface. The window that incremental
+    // covers contains no to-device traffic -- nothing sends any before step
+    // 6 -- so the only fact in its payload is the one this step asserts.
+    // After that the chain advances off each payload's own `next_batch`,
+    // the same cursor machinery direction 2 below uses. `sync` is the
+    // payload the loop ended on: the one that carried the news, and the
+    // freshest `next_batch` either way.
+    let mut since: Option<String> = None;
+    let mut sync;
+    let mut syncs = 0;
+    let account_reported = loop {
+        let query = match &since {
+            Some(cursor) => format!(
+                "/_matrix/client/v3/sync?timeout=0&since={}",
+                encode_segment(cursor)
+            ),
+            None => "/_matrix/client/v3/sync?timeout=0".to_string(),
+        };
+        sync = homeserver.ok("GET", &query, Some(&library.token), None);
+        syncs += 1;
+        let changed: Vec<&str> = sync["device_lists"]["changed"]
+            .as_array()
+            .map(|users| users.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        if changed.contains(&library.user_id.as_str()) {
+            break true;
+        }
+        if syncs >= 10 {
+            break false;
+        }
+        since = Some(if since.is_none() {
+            cursor_before_anything.clone()
+        } else {
+            sync["next_batch"]
+                .as_str()
+                .expect("a /sync response carries a next_batch")
+                .to_string()
+        });
+    };
     assert!(
-        changed.contains(&library.user_id.as_str()),
-        "the homeserver's own /sync must report this account's device list as changed \
-         before this step can tell whether the machine learned from the payload; it \
-         reported {changed:?}"
+        account_reported,
+        "the homeserver's own /sync must eventually report this account's device \
+         list as changed -- Continuwuity on the initial sync, Synapse on an \
+         incremental one -- before this step can tell whether the machine \
+         learned from the payload; it still had not after {syncs} syncs"
     );
 
     // Nothing is asserted about the returned counts here, deliberately: a
@@ -344,10 +416,8 @@ fn level_two_interoperability_over_a_real_homeserver() {
     // direction 2 below, where the homeserver has actually delivered
     // something for them to describe. What is asserted here is a consequence
     // the machine could not have produced on its own.
-    run(receive_sync_changes(
-        &encryption_slice(&initial_sync).to_string(),
-    ))
-    .expect("a real /sync payload must be accepted");
+    run(receive_sync_changes(&encryption_slice(&sync).to_string()))
+        .expect("a real /sync payload must be accepted");
 
     let after_sync = pump_and_send(&homeserver, &library.token);
     let queried: Vec<String> = after_sync
@@ -578,7 +648,9 @@ fn level_two_interoperability_over_a_real_homeserver() {
         .expect("the counterparty reports the id it sent")
         .to_string();
 
-    let mut since = initial_sync["next_batch"]
+    // Continuing from the last payload step 5 saw: its `next_batch` is the
+    // freshest cursor this account has synced to, wherever the loop stopped.
+    let mut since = sync["next_batch"]
         .as_str()
         .expect("a /sync response carries a next_batch")
         .to_string();
