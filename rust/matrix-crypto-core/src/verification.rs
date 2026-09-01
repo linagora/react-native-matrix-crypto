@@ -3468,6 +3468,15 @@ mod tests {
     /// constant compared against itself asserts nothing.
     #[test]
     fn a_product_that_asks_for_nothing_announces_what_shipped_before_codes() {
+        // The switch is process-wide and every test in this group resets it,
+        // offers something and reads it back, so the tests race each other
+        // under cargo's default parallel harness -- which is how run
+        // 33441556286 failed here, reading `BOTH` where a concurrent reset
+        // had promised `NEITHER`. `machine`'s test lock is the one this
+        // crate already keeps for exactly this, and flow-creating tests
+        // below hold it too, so holding it here makes the whole switch
+        // single-writer in tests.
+        let _guard = futures::executor::block_on(crate::machine::lock_for_test());
         reset_code_capabilities_for_test();
         assert_eq!(
             announced_methods(),
@@ -3496,6 +3505,8 @@ mod tests {
     /// statement that nothing in this repository can watch that.
     #[test]
     fn a_product_that_can_only_show_says_so_and_claims_no_camera() {
+        // Serialised against the sibling switch tests: see the first of them.
+        let _guard = futures::executor::block_on(crate::machine::lock_for_test());
         reset_code_capabilities_for_test();
         offer_codes(CodeCapabilities {
             can_show: true,
@@ -3519,6 +3530,8 @@ mod tests {
     /// owns a camera and no surface to draw on is as real as the one above.
     #[test]
     fn a_product_that_can_only_scan_says_that_instead() {
+        // Serialised against the sibling switch tests: see the first of them.
+        let _guard = futures::executor::block_on(crate::machine::lock_for_test());
         reset_code_capabilities_for_test();
         offer_codes(CodeCapabilities {
             can_show: false,
@@ -3543,6 +3556,8 @@ mod tests {
     /// together would pass against one that ignored `can_scan`.
     #[test]
     fn asking_for_both_announces_both_and_the_switch_is_not_a_latch() {
+        // Serialised against the sibling switch tests: see the first of them.
+        let _guard = futures::executor::block_on(crate::machine::lock_for_test());
         reset_code_capabilities_for_test();
         offer_codes(CodeCapabilities {
             can_show: true,
@@ -3579,6 +3594,8 @@ mod tests {
     /// the exact shape of the defect the record replaces.
     #[test]
     fn each_half_of_the_switch_is_stored_and_reported_on_its_own() {
+        // Serialised against the sibling switch tests: see the first of them.
+        let _guard = futures::executor::block_on(crate::machine::lock_for_test());
         for can_show in [false, true] {
             for can_scan in [false, true] {
                 reset_code_capabilities_for_test();
