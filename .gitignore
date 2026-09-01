@@ -51,3 +51,6 @@ __pycache__/
 # to something vaguer that could not be wrong. The check is that grep, run
 # against each file named above.
 docs/
+
+# Generated API reference (yarn docs; published to GitHub Pages by docs.yml)
+api-docs/

@@ -22,6 +22,7 @@ It exposes [`matrix-sdk-crypto`](https://github.com/matrix-org/matrix-rust-sdk/t
 * [Verifying a device](#verifying-a-device)
 * [Limits you must design around](#limits-you-must-design-around)
 * [What works today](#what-works-today)
+* [API reference and stability](#api-reference-and-stability)
 * [Design notes and history](#design-notes-and-history)
 * [Roadmap](#roadmap)
 * [Contributing](#contributing)
@@ -534,6 +535,12 @@ What `senderVerification` can also do is tell an ordinary unsigned device apart 
 **A signal that has not arrived may still be coming, and nothing bounds how late.** A crypto signal was observed missing a 2000 ms budget once in eight launches on an emulator, and that observation **remains unexplained**. The measurement that followed removed a candidate rather than finding a cause: emission was measured before and after the change that replaced one operating system thread per signal with a reusable pool, under three host conditions including deliberate saturation, and both arms delivered in milliseconds, so emission is not what those seconds were paying for. The original check had no instrument and so cannot tell a late callback from a lost one. The interop suite's 10000 ms wait is interpolated between the one budget watched failing and the one watched passing, not derived from the clean distribution, and nothing has ever been observed at 10000 itself. Design for a signal that is late, not for one that cannot be. The full measurement record, with the raw samples, is kept outside this repository.
 
 **iOS signal delivery has been measured on a simulator, and on nothing else.** Forty launches on a booted iOS 26.5 simulator, interleaved between two builds of the emission path so that host drift falls on both arms equally: every launch delivered its callback and reported every check passing, no signal was lost, and the whole distribution is milliseconds, the worst first delivery anywhere in the run being 29 ms. The callback never lost the race to the promise, in any of the 40, where on Android it lost it in half of them. So the 10000 ms budget is generous here too, and for the first time that is an observation rather than an assumption. **A simulator is not a device, and the gap is not a detail.** It runs on the development machine's own processor, scheduled by that machine's kernel, with no thermal throttling, no app lifecycle, no memory pressure from other applications and no radio, and it runs the simulator slice rather than the device slice of the Rust. What the run establishes is that the callback path works on iOS, that it delivers rather than dropping, and roughly what it costs when nothing is in its way. **iOS hardware remains unmeasured**, and `ci.yml` still runs no iOS end to end leg, so no job exercises this path on a pull request. The full record, with the method and the raw samples, is kept outside this repository.
+
+## API reference and stability
+
+The full reference for the published surface — every function, type and error kind, generated from the doc comments in `src/` — is rebuilt on every merge to main and published at [linagora.github.io/react-native-matrix-crypto](https://linagora.github.io/react-native-matrix-crypto/). The prose in this file is the guide; the reference is the contract.
+
+Until 1.0 a minor release may still change the surface where a measured fact demands it. From 1.0, a breaking change ships only as a major version. `exportSecrets` and `importSecrets` are the exception that proves the rule in reverse: they are decided against rather than pending, frozen rejecting with `not_implemented`, and they stay that way rather than becoming breaking removals.
 
 ## Design notes and history
 

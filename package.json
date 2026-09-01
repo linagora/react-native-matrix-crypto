@@ -3,9 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
-  "workspaces": ["packages/*"],
-  "engines": { "node": ">=22.22.3" },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.22.3"
+  },
   "scripts": {
+    "docs": "typedoc",
     "gate:workspaces": "./scripts/assert-workspaces.sh",
     "gate:boundary": "./scripts/assert-core-boundary.sh",
     "gate:drift": "./scripts/assert-no-drift.sh",
@@ -19,5 +24,9 @@
     "gate:measure-guards": "./scripts/assert-measure-guards.sh",
     "gate:measure-guards-ios": "./scripts/assert-measure-guards-ios.sh",
     "gate:artifact-provenance": "./scripts/assert-artifact-provenance.sh"
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.20",
+    "typescript": "5.9.3"
   }
 }

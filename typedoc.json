@@ -1,0 +1,10 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["packages/react-native-matrix-crypto/src/index.ts"],
+  "tsconfig": "packages/react-native-matrix-crypto/tsconfig.json",
+  "out": "api-docs",
+  "compilerOptions": {
+    "jsx": "react-native",
+    "allowImportingTsExtensions": true
+  }
+}
