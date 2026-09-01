@@ -485,20 +485,36 @@ EOF
   CONTAINER_B="rnmc-level-two-fed-b-$$-$STARTED_AT"
 
   if [ "$FEDERATED" = "1" ]; then
-    # The bridge both containers join. A fixed subnet, so the servers'
-    # allow-private-ranges configuration can name it without parsing what
-    # docker would otherwise have chosen. The aliases a.rnmc.test /
-    # b.rnmc.test are what make each server's name resolve on it: docker's
-    # embedded DNS answers aliases on user-defined networks, which is what
-    # makes the server_name DNS-resolvable for federation.
+    # The bridge both containers join. No fixed subnet: docker is asked to
+    # pick a free one, because a fixed one made a second federated run on
+    # the same daemon fail with an overlapping-address-pool error -- and the
+    # stale sweep above deliberately leaves a killed run's network in place
+    # for STALE_AFTER_SECONDS, so every retry within that window died at
+    # this spot. The one configuration that must name the subnet -- synapse's
+    # ip_range_whitelist below -- reads the assigned CIDR back off the
+    # created network. The aliases a.rnmc.test / b.rnmc.test are what make
+    # each server's name resolve on it: docker's embedded DNS answers
+    # aliases on user-defined networks, which is what makes the server_name
+    # DNS-resolvable for federation.
     NETWORK="rnmc-level-two-fed-$$-$STARTED_AT"
     PROGRESS="federated docker network create"
     docker network create \
       --label "$CONTAINER_LABEL" \
       --label "$STARTED_LABEL=$STARTED_AT" \
-      --subnet 172.30.7.0/24 "$NETWORK" >/dev/null \
+      "$NETWORK" >/dev/null \
       || fail "the federated docker network could not be created."
     PROGRESS="federated docker network created: $NETWORK"
+
+    # The CIDR docker actually assigned. Synapse's ip_range_whitelist below
+    # has to name it, and only the network knows it now that docker chose.
+    NETWORK_SUBNET=$(docker network inspect \
+      --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}' "$NETWORK" 2>/dev/null) \
+      || fail "the federated docker network was created but its subnet could
+      not be read back, and synapse's ip_range_whitelist has to name it."
+    [ -n "$NETWORK_SUBNET" ] \
+      || fail "the federated docker network was created with no subnet in its
+      IPAM config, and synapse's ip_range_whitelist has to name one."
+    PROGRESS="federated docker network subnet: $NETWORK_SUBNET"
 
     # One self-signed certificate per server, its SAN the name the other
     # server connects to. TLS is not optional here: neither implementation
@@ -717,7 +733,9 @@ $(docker logs "$container-generate" 2>&1 | tail -20 || true)"
         #     default ip_range_blacklist refuses federation traffic to and
         #     from RFC1918 ranges, which is where every docker network
         #     lives. The whitelist takes precedence over the blacklist for
-        #     the subnet it names.
+        #     the subnet it names. The value is the CIDR docker assigned and
+        #     this script read back at network creation, not a fixed one --
+        #     see the FEDERATED block above.
         #   * trusted_servers emptied: the shipped default is matrix.org,
         #     consulted as a signature notary when a direct key fetch fails.
         #     This network has no route to matrix.org, and with certificate
@@ -741,7 +759,7 @@ $(docker logs "$container-generate" 2>&1 | tail -20 || true)"
           printf 'tls_private_key_path: "/data/fed.key"\n'
           printf 'federation_verify_certificates: false\n'
           printf 'ip_range_whitelist:\n'
-          printf '  - "172.30.7.0/24"\n'
+          printf '  - "%s"\n' "$NETWORK_SUBNET"
           printf 'trusted_key_servers: []\n'
         } >> "$yaml"
       fi
