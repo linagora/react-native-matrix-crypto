@@ -185,8 +185,8 @@ SYNAPSE_IMAGE=${SYNAPSE_IMAGE:-docker.io/matrixdotorg/synapse@sha256:edf259d2b57
 HOMESERVER_IMPL=${HOMESERVER_IMPL:-continuwuity}
 
 # Whether the run additionally stands up a second, federating homeserver for
-# the sixth proof. Validated where HOMESERVER_IMPL is, next to the check
-# that refuses anything but 0 or 1 before anything is started.
+# the sixth proof. Validated before the homeserver branch below, because both
+# the manual path and the container path consume it.
 FEDERATED=${FEDERATED:-0}
 
 # The homeserver's `server_name`, which is also the domain half of the MXID.
@@ -339,6 +339,19 @@ trap 'echo "got TERM/HUP at progress: $PROGRESS" >&2; exit 143' TERM HUP
 
 WORKDIR=$(mktemp -d)
 
+# Validated before the homeserver branch, not inside the container half of
+# it: both paths consume FEDERATED. The manual path below checks only for
+# the one valid value it cannot honour (1), so without this check above it
+# a value like `true` or `2` would sail past that comparison and silently
+# run the non-federated proofs -- a run proving something other than what
+# was asked for, the same failure the HOMESERVER_IMPL check refuses.
+case "$FEDERATED" in
+  0 | 1) ;;
+  *) fail "FEDERATED must be 0 or 1, not '$FEDERATED'.
+    A value that fell through to one of the bring-ups below would be a run
+    that proved something other than what was asked for." ;;
+esac
+
 # --- 1. the homeserver -----------------------------------------------------
 
 if [ -n "${MATRIX_INTEROP_HOMESERVER:-}" ]; then
@@ -412,8 +425,7 @@ else
       rust/matrix-crypto-core/tests/interop/mautrix_party with -tags goolm.
       Nothing has been started yet, so there is nothing to clean up."
 fi
-if true; then
-  :
+if [ -z "${MATRIX_INTEROP_HOMESERVER:-}" ]; then
 
   # The one hole the traps cannot close: a `kill -9` of this script, or a
   # machine losing power, leaves the container running with nothing left to
@@ -472,12 +484,6 @@ EOF
       The two bring-ups below are different code and assert different things
       about their server; a value that fell through to one of them would be a
       run that proved something other than what was asked for." ;;
-  esac
-  case "$FEDERATED" in
-    0 | 1) ;;
-    *) fail "FEDERATED must be 0 or 1, not '$FEDERATED'.
-      A value that fell through to one of the bring-ups below would be a run
-      that proved something other than what was asked for." ;;
   esac
 
   STARTED_AT=$(date +%s)
