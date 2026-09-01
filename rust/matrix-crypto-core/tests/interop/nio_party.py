@@ -84,6 +84,25 @@ class Party:
         # rebuild one from a cancelled comparison, and a cancelled
         # comparison is exactly when `sas_commitment_probe` needs it.
         self.starts = {}
+        # The newest `prev_batch` token per joined room, recorded off every
+        # sync response by `_record_rooms`. `room_messages(start=...)` is
+        # documented to accept a room timeline's prev_batch (or a prior
+        # /messages token); the sync cursor `next_batch` is NOT on that
+        # list, and passing it relies on homeserver-specific token
+        # interchangeability -- a server is free to answer it with an
+        # invalid-pagination-token error, which is what a late joiner's
+        # history fetch then fails on.
+        self.prev_batches = {}
+
+    def _record_rooms(self, response):
+        """Keep each joined room's timeline prev_batch from one sync response."""
+        rooms = getattr(response, "rooms", None)
+        if rooms is None:
+            return
+        for room_id, info in rooms.join.items():
+            prev_batch = info.timeline.prev_batch
+            if prev_batch is not None:
+                self.prev_batches[room_id] = prev_batch
 
     async def op_login(self, cmd):
         homeserver = os.environ["MATRIX_INTEROP_HOMESERVER"]
@@ -124,7 +143,8 @@ class Party:
         is a visible missing step rather than a silent absence.
         """
         for _ in range(rounds):
-            await self.client.sync(timeout=timeout_ms, full_state=False)
+            response = await self.client.sync(timeout=timeout_ms, full_state=False)
+            self._record_rooms(response)
             if self.client.should_upload_keys:
                 await self.client.keys_upload()
             if self.client.should_query_keys:
@@ -192,7 +212,17 @@ class Party:
         limit = int(cmd.get("limit", 20))
         until_found = set(cmd.get("until_found", []))
         max_rounds = int(cmd.get("max_rounds", 10))
-        start = self.client.next_batch
+        # The room's own prev_batch, recorded off the syncs `settle` ran
+        # after the join -- the one token nio documents for starting
+        # pagination. When no sync carried this room (this op is only ever
+        # called after a settle, so that would already be a broken driver),
+        # start is None and nio omits `from` from the request entirely: the
+        # server answers with its current tail and the pages below still
+        # walk backwards from there. What is not passed is the sync cursor
+        # `next_batch`: pagination tokens and sync tokens are not
+        # interchangeable per the spec, and a server may reject one where it
+        # expects the other.
+        start = self.prev_batches.get(room_id)
         events = {}
 
         def record(event):
@@ -281,6 +311,7 @@ class Party:
 
         while outstanding() and asyncio.get_event_loop().time() < deadline:
             response = await self.client.sync(timeout=3000, full_state=False)
+            self._record_rooms(response)
             rooms = getattr(response, "rooms", None)
             if rooms is not None and room_id in rooms.join:
                 for event in rooms.join[room_id].timeline.events:
