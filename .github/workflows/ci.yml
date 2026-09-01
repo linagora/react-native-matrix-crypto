@@ -559,6 +559,18 @@ jobs:
           script: ./scripts/run-probe-on-emulator.sh
 
   interop-level-two:
+    # The job name carries which homeserver implementation this leg stands up:
+    # the proofs must pass against both Continuwuity and Synapse (issue #8),
+    # and the only difference between the two legs is HOMESERVER_IMPL, handed
+    # to the script below.
+    name: interop-level-two (${{ matrix.impl }})
+    strategy:
+      # One implementation failing must not cancel the other leg: a red
+      # Synapse run alongside a green Continuwuity run is exactly the
+      # comparison this matrix exists to produce.
+      fail-fast: false
+      matrix:
+        impl: [continuwuity, synapse]
     # M2's final exit criterion (design doc section 8): a real Matrix client
     # decrypts what this library encrypted, and this library decrypts what it
     # sent, over a real homeserver -- with a one-character ciphertext
@@ -633,3 +645,5 @@ jobs:
           go-version-file: rust/matrix-crypto-core/tests/interop/mautrix_party/go.mod
           cache-dependency-path: rust/matrix-crypto-core/tests/interop/mautrix_party/go.sum
       - run: ./scripts/run-level-two-interop.sh
+        env:
+          HOMESERVER_IMPL: ${{ matrix.impl }}
