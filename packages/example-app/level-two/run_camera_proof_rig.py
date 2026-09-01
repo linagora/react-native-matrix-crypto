@@ -434,6 +434,24 @@ class Element:
                 "      The scanner cannot open without it, and the run refuses "
                 "to time out for a permission prompt nobody can tap.")
 
+    def reset(self, serial):
+        # ASSUMPTION: the rig phone is dedicated to this leg, so wiping
+        # Element's data loses nothing a person put there; what it buys is
+        # a deterministic first launch. The previous run's account dies
+        # with its homeserver in `finally`, and an Element still signed in
+        # to a dead account returns to that stale session on app_start
+        # instead of the onboarding screens the sign-in flow taps for --
+        # so the labels never appear and the run burns its timeouts.
+        # pm clear also revokes the CAMERA grant, which is why this runs
+        # BEFORE wake: wake is where the grant happens.
+        cleared = adb_on(serial, "shell", "pm", "clear", self.package)
+        require(cleared.returncode == 0,
+                f"clearing {self.package}'s data failed: "
+                f"{cleared.stderr.strip()}.\n"
+                "      The next sign-in cannot start from a stale session, "
+                "so the run refuses to continue on a half-reset phone.")
+        rig_log("phone: Element's data cleared; sign-in starts from onboarding")
+
     def tap_first_of(self, candidates, timeout_s, what):
         """Taps the first of `candidates` that appears, within the deadline.
 
@@ -503,6 +521,7 @@ def element_sign_in(element, serial, homeserver_url, localpart, password):
     http://127.0.0.1:<port> exactly as a person on the rig would reach it
     (run_camera_proof.py established this pattern for a cabled device).
     """
+    element.reset(serial)
     element.wake(serial)
     element.start()
     for step in ("sign_in_entry", "choose_other_server"):
