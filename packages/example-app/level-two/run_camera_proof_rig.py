@@ -541,7 +541,7 @@ def element_bootstrap_identity(element, homeserver, user_id, token):
         element.dismiss_any_of(candidates[0])
         status, body = homeserver.call("POST", "/_matrix/client/v3/keys/query",
                                        token, {"device_keys": {user_id: []}})
-        if status == 200 and body.get("self_signing_keys", {}).get("keys"):
+        if status == 200 and body.get("self_signing_keys", {}).get(user_id, {}).get("keys"):
             rig_log("the account's cross-signing identity is published")
             return
         time.sleep(3)
@@ -607,7 +607,7 @@ def wait_for_cross_signature(homeserver, user_id, device_id, token):
                                        token, {"device_keys": {user_id: [device_id]}})
         if status == 200:
             self_signing = set(
-                body.get("self_signing_keys", {}).get("keys", {}).keys())
+                body.get("self_signing_keys", {}).get(user_id, {}).get("keys", {}).keys())
             device = body.get("device_keys", {}).get(user_id, {}).get(device_id, {})
             signatures = set(device.get("signatures", {}).get(user_id, {}).keys())
             if self_signing and signatures & self_signing:
