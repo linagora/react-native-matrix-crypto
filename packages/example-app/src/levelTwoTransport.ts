@@ -77,8 +77,14 @@ export interface LevelTwoPlan {
    * a real code and waits for a human to hold another client's camera up to
    * it. Nothing automated can make that claim, which is why it is a separate
    * mode rather than one more step in the suite.
+   *
+   * `'camera-proof'` is that same drawing side with the person replaced by
+   * a fixed rig: an emulator shows the code fullscreen while a phone on a
+   * mount, running an unmodified Element, scans it (issue #6). The plan is
+   * identical in shape -- the conductor mechanism is deliberately reused --
+   * and only the app's mode branch and the host-side driver differ.
    */
-  mode?: 'level-two' | 'scanned-code'
+  mode?: 'level-two' | 'scanned-code' | 'camera-proof'
   /** Base URL of the throwaway homeserver, as the emulator can reach it. */
   homeserver: string
   /** Base URL of the conductor, for {@link counterpartyOp}. */

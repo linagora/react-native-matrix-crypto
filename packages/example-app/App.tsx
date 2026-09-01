@@ -24,6 +24,7 @@
 
 import React from 'react';
 import { SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, useColorScheme } from 'react-native';
+import { CameraProofHarness } from './src/CameraProofHarness';
 import { FoldWatch } from './src/FoldWatch';
 import { GuidedFlow } from './src/GuidedFlow';
 import { LevelTwoHarness } from './src/LevelTwoHarness';
@@ -83,6 +84,15 @@ function App({ storeDir = '' }: { storeDir?: string }) {
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      {plan !== undefined && plan !== null && plan.mode === 'camera-proof' ? (
+        // The camera-proof run renders outside the ScrollView deliberately:
+        // a scanner in a fixed mount should frame nothing but the symbol and
+        // its quiet zone, and the heading/diagnostic text the other modes
+        // carry would sit in the camera's view the whole run. Same conductor
+        // question as the other modes -- a launch is a camera-proof launch
+        // only because a conductor handed out this plan.
+        <CameraProofHarness plan={plan} storeDir={storeDir} />
+      ) : (
       <ScrollView contentInsetAdjustmentBehavior="automatic" style={styles.container}>
         <Text style={styles.heading}>react-native-matrix-crypto</Text>
         <FoldWatch />
@@ -115,6 +125,7 @@ function App({ storeDir = '' }: { storeDir?: string }) {
           </>
         )}
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

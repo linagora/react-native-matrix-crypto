@@ -1,0 +1,125 @@
+# The camera proof (issue #6): a REAL phone camera reads a verification code
+# this library draws, assertable by a run.
+#
+# WHAT THIS WORKFLOW PROVES, AND WHAT IT DOES NOT (said plainly, because a
+# check whose limits are not written down gets read as claiming more)
+#
+#   PROVEN BY A GREEN RUN: the example app on a booted emulator, in its
+#   CAMERA_PROOF mode, drew `getVerificationCode`'s own modules fullscreen;
+#   an UNMODIFIED Element on a physical phone, fixed in a mount with its
+#   camera aimed at the machine's display, decoded that symbol; and the
+#   verification flow completed -- witnessed by the library side's log
+#   reaching `done` (a pinned `CAMERA_PROOF_SUMMARY 5/5` line) AND by the
+#   account state over the client API (the showing device's keys carry a
+#   cross-signing signature). If the optics fail, the scan never completes
+#   and the leg times out: the timeout is the optical assertion.
+#
+#   NOT PROVEN, AND NEVER CLAIMED BY THIS FILE: that any other client, any
+#   other phone, or any other lighting reads the symbol. One mainstream
+#   client on one rig is the claim; the design comment on issue #6 says why
+#   that is the honest shape of this assertion.
+#
+#   NOT YET PROVEN AT ALL, AS OF THIS COMMIT: none of it. No rig exists.
+#   The phone-driving half of the driver is written but has never executed
+#   against a real Element; every entry point refuses cleanly without the
+#   rig. The first run of this workflow is expected to be a refusal, and
+#   that refusal is the design working -- dispatch-only means this leg can
+#   never join the required checks while the hardware does not exist.
+#
+# WHY DISPATCH-ONLY: while no self-hosted runner carries the `camera-rig`
+# label, a pull_request trigger would queue forever and a push trigger would
+# fail; either would train people to read this leg's red as noise. It joins
+# the required checks only when the rig exists and has been watched passing
+# by hand at least once.
+
+name: camera-proof
+
+on:
+  workflow_dispatch:
+  # For when the rig is permanent and the leg has been watched passing: a
+  # nightly catch of optical regressions (glare from a moved lamp, an
+  # Element update that changes a screen the driver names). Leave commented
+  # until then -- a cron that fails for weeks is how a check gets ignored
+  # into uselessness.
+  # schedule:
+  #   - cron: '23 4 * * *'
+
+jobs:
+  camera-proof:
+    # The label pair IS the fixture: a self-hosted runner that is only this
+    # machine, provisioned with the emulator AVD, the mounted phone and the
+    # display arrangement. There is no point running this anywhere else;
+    # the script's first act is to demand CAMERA_RIG=1, which only this
+    # workflow sets.
+    runs-on: [self-hosted, camera-rig]
+    timeout-minutes: 150
+    env:
+      # The declaration the script demands. See scripts/run-camera-proof.sh
+      # for why it is an explicit act rather than a detected proxy.
+      CAMERA_RIG: '1'
+      CAMERA_RIG_EMULATOR: emulator-5554
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.nvmrc', cache: yarn }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+
+      # uiautomator2 is the phone-side driver. Deliberately NOT pinned in a
+      # requirements file here: the phone side is unvalidated, and a pin is
+      # a claim of knowledge this repository does not yet have. The version
+      # the rig proves itself with is the version worth pinning -- that is
+      # maintenance work the first real run will land.
+      - name: Install the phone-side driver
+        run: |
+          python3 -m pip install uiautomator2
+          python3 -m uiautomator2 init
+
+      # The APK must be built for the ABI of THIS rig's emulator; there is
+      # no universal choice, so the ABI is read off the booted emulator and
+      # mapped to its Rust target. The leg itself refuses a mismatched APK
+      # on install; this step just makes the match.
+      - name: Build the example app for the rig emulator's ABI
+        run: |
+          set -euo pipefail
+          ABI=$(adb -s "$CAMERA_RIG_EMULATOR" shell getprop ro.product.cpu.abi | tr -d '\r')
+          case "$ABI" in
+            arm64-v8a)  TARGET=aarch64-linux-android ;;
+            x86_64)     TARGET=x86_64-linux-android ;;
+            *)
+              echo "FAIL: the rig emulator reports an unmapped ABI: $ABI"
+              echo "      Map it to its Rust target in camera-proof.yml."
+              exit 1
+              ;;
+          esac
+          echo "Emulator ABI: $ABI (Rust target $TARGET)"
+
+          yarn install --frozen-lockfile
+          rustup target add "$TARGET"
+          # Same pin and rationale as ci.yml's build-android.
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            cargo install cargo-ndk --version 4.1.2 --locked
+          fi
+          cd packages/react-native-matrix-crypto
+          # NOT --and-generate; the reason is the long comment in ci.yml's
+          # build-android (on Android it rewrites the turbo module into a
+          # stub). gate:stubs runs in the required gates on every PR.
+          yarn exec ubrn -- build android \
+            --config ../../ubrn.config.yaml \
+            --targets "$TARGET" \
+            --release
+          cd ../example-app/android
+          # Release, like probe-android: a debug APK would load its
+          # JavaScript from a Metro server and the leg would be testing
+          # Metro, not the library. Release forwards console.log to logcat,
+          # which is where the CAMERA_PROOF lines are read from.
+          ./gradlew :app:assembleRelease -PreactNativeArchitectures="$ABI" --no-daemon
+
+      # The assertion lives in the script and the Python driver, not here,
+      # and it asserts on what was FOUND (exactly one `CAMERA_PROOF_SUMMARY
+      # 5/5`), never on the absence of a FAIL line -- the rule every device
+      # leg in this repository keeps.
+      - name: Run the camera proof
+        run: ./scripts/run-camera-proof.sh
