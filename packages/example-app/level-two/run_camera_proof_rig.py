@@ -337,11 +337,24 @@ def wait_for_app_line(serial, pattern, timeout_s, what):
 ELEMENT_CANDIDATE_SCREENS = {
     # step -> (candidate texts, what the step is called). Texts are tried in
     # order until one is tappable; a step fails only when none appear.
-    "sign_in_entry": (["I already have an account", "Sign in"], "the opening screen"),
-    "choose_other_server": (["Other"], "the server-choice screen"),
-    "server_confirm": (["OK", "Next", "Continue"], "the server-confirm control"),
-    "username_confirm": (["Next", "Continue"], "the username-confirm control"),
-    "sign_in_submit": (["Sign in", "Log in", "Next"], "the sign-in control"),
+    #
+    # English first: those are the texts the selectors were written against.
+    # French follows because the first physical rig runs a fr-FR phone (the
+    # driver's locale ASSUMPTION names it): a candidate that does not appear
+    # is skipped, so an added translation can only widen a step, never narrow
+    # it -- and a step that matches nothing still fails naming everything it
+    # looked for, which is the maintenance signal.
+    "sign_in_entry": (["I already have an account", "Sign in",
+                       "J'ai déjà un compte", "Se connecter"],
+                      "the opening screen"),
+    "choose_other_server": (["Other", "Autre"], "the server-choice screen"),
+    "server_confirm": (["OK", "Next", "Continue", "Suivant", "Continuer"],
+                       "the server-confirm control"),
+    "username_confirm": (["Next", "Continue", "Suivant", "Continuer"],
+                         "the username-confirm control"),
+    "sign_in_submit": (["Sign in", "Log in", "Next",
+                        "Se connecter", "S'identifier", "Suivant"],
+                       "the sign-in control"),
     # Dismissive prompts that can block the first session until the account's
     # identity exists. "Verify this session" is deliberately NOT here: that
     # prompt is Element offering to verify the PHONE's own session, which is
@@ -350,10 +363,17 @@ ELEMENT_CANDIDATE_SCREENS = {
     # polls the homeserver instead of tapping through whatever it cannot
     # name.
     "bootstrap_dismiss": (["Skip", "Maybe later", "Not now", "Cancel",
-                           "Set up recovery"], "a first-session prompt"),
-    "settings_entry": (["Settings"], "the settings entry"),
-    "security_screen": (["Security & Privacy", "Security"], "the security screen"),
-    "verify_action": (["Verify", "Verify session", "Start verification"],
+                           "Set up recovery",
+                           "Ignorer", "Passer", "Plus tard", "Pas maintenant",
+                           "Annuler"],
+                          "a first-session prompt"),
+    "settings_entry": (["Settings", "Paramètres"], "the settings entry"),
+    "security_screen": (["Security & Privacy", "Security",
+                         "Sécurité et confidentialité", "Sécurité"],
+                        "the security screen"),
+    "verify_action": (["Verify", "Verify session", "Start verification",
+                       "Vérifier", "Vérifier la session",
+                       "Démarrer la vérification"],
                       "the verify action for the showing device"),
 }
 
