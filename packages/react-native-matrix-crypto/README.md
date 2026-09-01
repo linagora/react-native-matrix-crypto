@@ -541,9 +541,11 @@ How this library was built, what the measurements do and do not establish, and t
 
 ## Roadmap
 
-**Everything this library set out to do is built.** Encryption and decryption, device verification by comparing a short string, verification by scanning a code in all three modes the protocol defines, cross-signing identities, and recovery through server-side secret storage. The table above is the authority on what each of those does and does not promise; the design notes are the history behind it, and you do not need either to use the library.
+**The current release is 0.3.0.** It adds device verification by a scannable code in all three modes the protocol defines, with showing and scanning announced separately, on top of encryption and decryption, short-string verification, cross-signing identities and recovery through server-side secret storage. The npm badge at the top of this file always names the version actually published; this sentence names what the tree it points at contains.
 
-What remains open:
+**Everything this library set out to do is built.** The table above is the authority on what each capability does and does not promise; the design notes are the history behind it, and you do not need either to use the library.
+
+What remains open before 1.0:
 
 * a scannable code read by an ordinary phone camera, as something a run can assert rather than something a person confirms
 * multi participant scenarios and federation neutral test coverage
