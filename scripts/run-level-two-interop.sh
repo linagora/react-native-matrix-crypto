@@ -507,21 +507,29 @@ EOF
     # Hub is the image's own registry -- there is no third-party mirror
     # involved the way there is with continuwuity's forgejo.
     PULLED=""
+    LAST_PULL_ERROR=""
     for attempt in 1 2 3; do
       if docker image inspect "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
         PULLED=1
         break
       fi
       echo "Pulling the homeserver image (attempt $attempt)..."
-      if docker pull --quiet "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
+      # The pull's stderr is captured, not silenced: on 2026-09-01 the federated
+      # synapse leg died at this line on the runner with no output at all, and
+      # a failure that cannot report what the dependency said cannot be told
+      # apart from a defect in this script.
+      LAST_PULL_ERROR=$(docker pull "$SYNAPSE_IMAGE" 2>&1 >/dev/null | tail -3) || true
+      if docker image inspect "$SYNAPSE_IMAGE" >/dev/null 2>&1; then
         PULLED=1
         break
       fi
+      [ -n "$LAST_PULL_ERROR" ] && echo "  pull said: $LAST_PULL_ERROR"
       sleep $(( attempt * 5 ))
     done
     [ -n "$PULLED" ] || fail "could not pull $SYNAPSE_IMAGE after three attempts.
       Docker Hub is the image's own registry. If it is down, this job cannot
-      run, and that is a dependency rather than a defect in this library."
+      run, and that is a dependency rather than a defect in this library.
+      The last pull error was: ${LAST_PULL_ERROR:-<none captured>}"
 
     # Synapse cannot be configured purely through environment variables the
     # way continuwuity can: the official image expects a homeserver.yaml, and
