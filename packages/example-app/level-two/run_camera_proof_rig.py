@@ -402,7 +402,19 @@ class Element:
             )
         self.device = u2.connect(serial)
         try:
-            self.device.info
+            # NOT self.device.info: on Android 15+ (this rig's Pixel 10 Pro
+            # Fold is Android 16), the wetest stub's DeviceInfo calls
+            # UiDevice.getDisplaySizeDp, which goes through
+            # createWindowContext and dies with
+            # "ApplicationSharedMemory not initialized" -- the shared memory
+            # is only initialized in a real instrumentation process, and this
+            # server is a bare app_process. Verified empirically on the rig:
+            # info/screenOn crash, while shell/dump_hierarchy/selectors and
+            # window_size all work. A shell echo proves the same thing info
+            # did (RPC server up, adb channel live) without the broken call.
+            pong = self.device.shell("echo u2-ok").output.strip()
+            require(pong == "u2-ok",
+                    f"the phone answered {pong!r} to the shell probe.")
         except Exception as error:  # noqa: BLE001 -- reported, not handled
             raise RunFailed(
                 f"uiautomator2 cannot talk to the phone at {serial}: {error}.\n"
