@@ -175,8 +175,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use matrix_crypto_core::{
     bootstrap_identity, create_identity, create_machine, decrypt_event, encrypt_event,
     identity_status, mark_request_failed, mark_request_sent, receive_sync_changes, share_scope_key,
-    take_outgoing_requests, MachineConfig, MachineError, OutgoingRequest, SenderVerification,
-    SessionError,
+    take_outgoing_requests, MachineConfig, MachineError, OutgoingRequest, SenderTrustRequirement,
+    SenderVerification, SessionError,
 };
 use serde_json::{json, Value};
 
@@ -881,8 +881,12 @@ fn a_signing_identity_published_to_a_real_homeserver_and_what_a_sender_then_read
     let nio_raw_event =
         nio_raw_event.expect("the counterparty's own encrypted event must arrive in /sync");
 
-    let from_nio = run(decrypt_event(&scope, &nio_raw_event.to_string()))
-        .expect("the library must decrypt what matrix-nio encrypted");
+    let from_nio = run(decrypt_event(
+        &scope,
+        &nio_raw_event.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect("the library must decrypt what matrix-nio encrypted");
     let plaintext: Value = serde_json::from_slice(&from_nio.ciphertext)
         .expect("a decrypted content is well-formed JSON");
     assert_eq!(
@@ -1037,8 +1041,12 @@ fn a_signing_identity_published_to_a_real_homeserver_and_what_a_sender_then_read
     }
     let own_raw_event = own_raw_event.expect("this device's own event must arrive in /sync");
 
-    let from_own = run(decrypt_event(&scope, &own_raw_event.to_string()))
-        .expect("the library must decrypt an event it encrypted itself");
+    let from_own = run(decrypt_event(
+        &scope,
+        &own_raw_event.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect("the library must decrypt an event it encrypted itself");
     let plaintext: Value = serde_json::from_slice(&from_own.ciphertext)
         .expect("a decrypted content is well-formed JSON");
     assert_eq!(

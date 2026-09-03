@@ -976,7 +976,7 @@ mod tests {
     use crate::runtime::in_runtime;
     use crate::session::{
         decrypt_event, mark_request_sent, receive_sync_changes, share_scope_key,
-        take_outgoing_requests, OutgoingRequest, SenderVerification,
+        take_outgoing_requests, OutgoingRequest, SenderTrustRequirement, SenderVerification,
     };
     use crate::signing::{create_identity, identity_status};
     use matrix_sdk_common::ruma::api::client::keys::claim_keys::v3::Response as KeysClaimResponse;
@@ -1741,7 +1741,7 @@ mod tests {
             "$after-the-reinstall:example.org",
             encrypted.content.json().get(),
         );
-        let envelope = decrypt_event(SCOPE, &event)
+        let envelope = decrypt_event(SCOPE, &event, SenderTrustRequirement::Any)
             .await
             .expect("the library must decrypt what the peer encrypted");
 

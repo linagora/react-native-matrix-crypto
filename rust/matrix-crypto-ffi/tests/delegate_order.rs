@@ -84,7 +84,8 @@
 use matrix_crypto_ffi::{
     create_crypto_machine, decrypt_event, device_identity_keys, device_statuses, encrypt_event,
     mark_request_sent, receive_sync_changes, request_verification, share_scope_key,
-    take_outgoing_requests, CryptoMachineConfig, MachineFfiError, TrustState,
+    take_outgoing_requests, CryptoMachineConfig, MachineFfiError, SenderTrustRequirement,
+    TrustState,
 };
 
 const SCOPE: &str = "!delegate-order:example.org";
@@ -239,10 +240,16 @@ fn the_exported_functions_pass_their_arguments_to_the_core_in_order() {
             envelope.sender, content
         );
 
-        let decrypted = decrypt_event(SCOPE.to_string(), raw_event).await.expect(
-            "decrypt_event must receive the scope first and the event second -- \
+        // `Any` explicitly, because this test is about argument ORDER and
+        // nothing else: the requirement is the surface's default, so a
+        // reader comparing this call against the signature sees the same
+        // three arguments in the same three places.
+        let decrypted = decrypt_event(SCOPE.to_string(), raw_event, SenderTrustRequirement::Any)
+            .await
+            .expect(
+                "decrypt_event must receive the scope first and the event second -- \
                  transposed, the core tries to parse a whole event as a scope",
-        );
+            );
         assert!(
             decrypted.ciphertext == PAYLOAD.as_bytes(),
             "the recovered payload must be the one encrypt_event was given, byte for \

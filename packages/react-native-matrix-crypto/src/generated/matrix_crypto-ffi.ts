@@ -214,7 +214,8 @@ interface NativeModuleInterface {
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(
     scope: Uint8Array,
-    rawJson: Uint8Array
+    rawJson: Uint8Array,
+    senderTrustRequirement: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_device_identity_keys(
     userId: Uint8Array,

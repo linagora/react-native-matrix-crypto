@@ -521,6 +521,56 @@ export type SenderVerification =
       problem: 'missing' | 'insecure_source'
     }
 
+/**
+ * What `decryptEvent` requires of a sender's device before it hands an
+ * event to the product. The one trust decision this library hands the
+ * caller instead of making for it, and the reason both exist: whether the
+ * product's users carry cross-signing identities is something the product
+ * knows and this library cannot.
+ *
+ * **Closed, deliberately**, like `SenderVerification` and `TrustState`: a
+ * product branching on a requirement has to be told when a value it has
+ * never seen appears, rather than handed an open type that compiles either
+ * way. Widening this union is a breaking change for every consumer that
+ * switched on it exhaustively.
+ *
+ * **What every tightened tier checks, and what none of them checks.** The
+ * sending device must be signed by its owner's cross-signing identity.
+ * Whether this device has verified that owner is irrelevant to the two
+ * tightened tiers -- they are about the sender's device being vouched for,
+ * not about our opinion of the voucher, which is what
+ * `EventEnvelope.senderVerification` reports after the fact. And local
+ * trust is deliberately absent from the set, exactly as it is in the layer
+ * underneath: a comparison or a scan sets local trust in a device, and no
+ * tier takes it, so a carefully compared peer whose device carries no
+ * cross-signature is refused by every tightened tier alike. A product whose
+ * users verify devices without cross-signing identities should stay on
+ * `'any'` and gate on `senderVerification` instead.
+ *
+ * **The default is `'any'`**, and that is this library's behaviour since
+ * 0.1.0: it is the layer underneath's most permissive option, the one it
+ * documents as "not recommended, per the guidance of MSC4153", kept as the
+ * default because refusing events from unsigned senders is the product's
+ * decision to make. A call that passes nothing gets it.
+ */
+export type SenderTrustRequirement =
+  // Decrypt events from every sender's device, signed or not. The default.
+  | 'any'
+  // Decrypt events from a device signed by its owner's cross-signing
+  // identity, and from legacy sessions whose sender this machine could not
+  // record when the session was created. The tightening a product reaching
+  // for "refuse unauthenticated senders" wants when it has pre-existing
+  // sessions around: events from unsigned devices are refused, but history
+  // that predates trust information keeps decrypting, reading
+  // 'unsigned_device' or 'no_device'/'insecure_source' on the events that
+  // pass on legacy grounds alone.
+  | 'identity_signed_or_legacy'
+  // Decrypt events from a device signed by its owner's cross-signing
+  // identity, and nothing else. The strictest tier: events from legacy
+  // sessions are refused along with events from unsigned devices, so a
+  // product that has never imported history can take this tier directly.
+  | 'identity_signed'
+
 /** Typed envelope for an encrypted or decrypted event. */
 export interface EventEnvelope {
   scope: CryptoScopeId

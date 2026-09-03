@@ -208,7 +208,8 @@ extern "C" {
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_decrypt_event(
         RustBuffer scope, 
-        RustBuffer raw_json
+        RustBuffer raw_json, 
+        RustBuffer sender_trust_requirement
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_device_identity_keys(
         RustBuffer user_id, 
@@ -3007,7 +3008,7 @@ NativeMatrixCrypto::NativeMatrixCrypto(
     props["ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event"),
-        2,
+        3,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(rt, thisVal, args, count);
         }
@@ -4206,7 +4207,7 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_create_recov
         return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_matrix_crypto_ffi_fn_func_decrypt_event(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1])
+        auto value = uniffi_matrix_crypto_ffi_fn_func_decrypt_event(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2])
         );
 
         

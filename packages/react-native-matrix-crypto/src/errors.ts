@@ -27,6 +27,16 @@ export type CryptoErrorKind =
   // retriable.
   | 'session_refused'
   | 'unknown_device'
+  // The other half of what 'unknown_device' used to fold, split out the day
+  // `decryptEvent`'s sender trust requirement became the caller's to
+  // choose: the device is fine and does not clear the trust bar the call
+  // required. A policy gap, not a broken event -- the user fixes it by
+  // verifying the device, or the product by relaxing the requirement it
+  // asked for, which is the opposite of what 'unknown_device' now means
+  // (provenance broken, nothing fixes it). Deliberately absent from
+  // RETRIABLE below: the same call with the same requirement fails the
+  // same way every time.
+  | 'sender_not_trusted'
   // Forward scaffolding, not dead: nothing produces this. Device
   // verification landed and did not produce it, and neither did
   // cross-signing, which was the blocker this comment used to name and
@@ -383,6 +393,15 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // caller does about either is the same: query that user's devices through
   // the pump and try again.
   ['UnknownDevice', 'unknown_device'],
+  // The split half, and what its presence here is worth: without this
+  // entry the newly-reachable `SessionFfiError::SenderNotTrusted` arrives
+  // as kind 'unknown' with the message "crypto error: unknown", which is
+  // the failure mode this map exists to prevent and which no test on the
+  // Rust side can see. It matters most here because the split exists so a
+  // product can tell "verify this person to read this" from "this event's
+  // provenance is broken", and this map is the only thing that decides
+  // whether it can.
+  ['SenderNotTrusted', 'sender_not_trusted'],
   ['Undecryptable', 'undecryptable'],
   // The remaining three `SessionFfiError` variants (Task 7): `raw_json`
   // that did not parse, an upstream crypto operation that failed for a

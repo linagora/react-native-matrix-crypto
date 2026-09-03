@@ -3,6 +3,7 @@ import type {
   CryptoAlgorithm,
   CryptoScopeId,
   EventEnvelope,
+  SenderTrustRequirement,
   SenderVerification,
   SasEmoji,
   SasMaterial,
@@ -39,6 +40,7 @@ import {
   startVerificationComparison as nativeStartVerificationComparison,
   submitScannedCode as nativeSubmitScannedCode,
   takeOutgoingRequests as nativeTakeOutgoingRequests,
+  SenderTrustRequirement as NativeSenderTrustRequirement,
   SenderVerification as NativeSenderVerification,
   TrustState as NativeTrustState,
   verificationCode as nativeVerificationCode,
@@ -483,10 +485,26 @@ export async function encryptEvent(
  * encrypted it. The last of those is an impersonation signal a product
  * should react to. It is a snapshot taken at decryption time, not a live
  * value; see the field.
+ *
+ * **`senderTrustRequirement` is the decision this call will not make for
+ * you**, and it is new to this surface: what a sender's device must satisfy
+ * before the plaintext is handed over. The default `'any'` is what every
+ * caller before the parameter existed got. The two tightened tiers make
+ * `'sender_not_trusted'` reachable for the first time -- its own kind
+ * rather than a fold into `'unknown_device'`, because the two want opposite
+ * things done about them: `'sender_not_trusted'` is a policy gap the user
+ * fixes by verifying the device (or the product, by relaxing the
+ * requirement), while `'unknown_device'` means the event's provenance is
+ * broken and nothing fixes it. Read {@link SenderTrustRequirement} before
+ * choosing: local trust is absent from every tier, so a product whose
+ * users verify devices without cross-signing identities should stay on the
+ * default and gate on the returned envelope's `senderVerification`
+ * instead.
  */
 export async function decryptEvent(
   scope: CryptoScopeId,
   rawEvent: unknown,
+  senderTrustRequirement: SenderTrustRequirement = 'any',
 ): Promise<EventEnvelope> {
   // `CryptoScopeId` performs no runtime validation (see types.ts) --
   // enforced by the type system for a caller that goes through it, but a
@@ -501,9 +519,40 @@ export async function decryptEvent(
   if (typeof scope !== 'string') {
     throw toCryptoError({ name: 'MalformedIdentifier' })
   }
+  // The same discipline, for the same reason, on the requirement: a
+  // caller that bypasses the closed union (plain JS, or `as any`) can
+  // reach this with a value that is none of the three. The generated
+  // enum converter has no default arm, so an unmatched value would
+  // leave the wire buffer unwritten and cross the boundary as whatever
+  // bytes happened to be there -- the one case that must be a refusal
+  // rather than a garbage value, and `nativeSenderTrustRequirementOf`
+  // deliberately cannot produce the refusal: its exhaustiveness is what
+  // makes a future union member a compile error there, and a `default`
+  // arm would have cost exactly that. So the runtime half lives here,
+  // before native, like the scope guard above.
+  //
+  // `rejected`, the generic input refusal, rather than a malformed
+  // kind: the value is a caller's own argument and nothing about it is
+  // malformed wire content.
+  if (
+    senderTrustRequirement !== 'any' &&
+    senderTrustRequirement !== 'identity_signed_or_legacy' &&
+    senderTrustRequirement !== 'identity_signed'
+  ) {
+    throw toCryptoError({
+      name: 'Rejected',
+      reason:
+        "senderTrustRequirement must be one of 'any', 'identity_signed_or_legacy' " +
+        "or 'identity_signed'",
+    })
+  }
   const rawEventJson = stringifyOrMalformed(rawEvent)
   try {
-    const decrypted = await nativeDecryptEvent(scope, rawEventJson)
+    const decrypted = await nativeDecryptEvent(
+      scope,
+      rawEventJson,
+      nativeSenderTrustRequirementOf(senderTrustRequirement),
+    )
     // Destructured, not returned directly. See encryptEvent above.
     const {
       scope: decryptedScope,
@@ -2409,6 +2458,28 @@ function verificationStageOf(
  * arriving *as* `'verified'` is still the failure that hurts most, and a
  * `Verified` the chain earned being dropped here is the one M4 added.
  */
+/**
+ * The one direction of the requirement mapping, closed union to native
+ * enum. Exhaustive by compile error, on the same terms
+ * {@link senderVerificationOf} states for its own switch: the union is
+ * closed, so a member added to `SenderTrustRequirement` fails this
+ * function rather than silently defaulting to the permissive tier --
+ * which is the one failure mode that must never be silent, since it would
+ * hand a product plaintext it asked to be refused.
+ */
+function nativeSenderTrustRequirementOf(
+  requirement: SenderTrustRequirement,
+): NativeSenderTrustRequirement {
+  switch (requirement) {
+    case 'any':
+      return NativeSenderTrustRequirement.Any
+    case 'identity_signed_or_legacy':
+      return NativeSenderTrustRequirement.IdentitySignedOrLegacy
+    case 'identity_signed':
+      return NativeSenderTrustRequirement.IdentitySigned
+  }
+}
+
 function senderVerificationOf(
   verification: NativeSenderVerification,
 ): SenderVerification {

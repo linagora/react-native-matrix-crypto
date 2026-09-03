@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   CryptoScopeId,
   SasMaterial,
+  SenderTrustRequirement,
   SyncDelta,
   VerificationStage,
 } from './types'
@@ -68,6 +69,7 @@ import {
   recoverIdentity as nativeRecoverIdentity,
   requestSelfVerification as nativeRequestSelfVerification,
   requestVerification as nativeRequestVerification,
+  SenderTrustRequirement as NativeSenderTrustRequirement,
   SenderVerification as NativeSenderVerification,
   SessionFfiError,
   shareScopeKey as nativeShareScopeKey,
@@ -726,6 +728,61 @@ describe('decryptEvent wiring to the native layer', () => {
     expect(new TextDecoder().decode(envelope.ciphertext)).toBe(
       'native-plaintext',
     )
+  })
+
+  /**
+   * The requirement is a parameter of the call, and the mapping from the
+   * closed union to the native enum is exhaustive by compile error. Every
+   * member is held here, in both directions that matter: each union value
+   * reaches the one native variant that means it, and a caller that passes
+   * nothing reaches the permissive default rather than `undefined` -- the
+   * one failure mode that must never be silent, since it would hand a
+   * product plaintext it asked to be refused.
+   */
+  it('forwards the sender trust requirement, and defaults to the permissive tier', async () => {
+    vi.mocked(nativeDecryptEvent).mockClear()
+
+    await decryptEvent(scope, { type: 'm.room.encrypted' })
+    expect(vi.mocked(nativeDecryptEvent).mock.calls.at(-1)?.[2]).toBe(
+      NativeSenderTrustRequirement.Any,
+    )
+
+    await decryptEvent(
+      scope,
+      { type: 'm.room.encrypted' },
+      'identity_signed_or_legacy',
+    )
+    expect(vi.mocked(nativeDecryptEvent).mock.calls.at(-1)?.[2]).toBe(
+      NativeSenderTrustRequirement.IdentitySignedOrLegacy,
+    )
+
+    await decryptEvent(scope, { type: 'm.room.encrypted' }, 'identity_signed')
+    expect(vi.mocked(nativeDecryptEvent).mock.calls.at(-1)?.[2]).toBe(
+      NativeSenderTrustRequirement.IdentitySigned,
+    )
+  })
+
+  /**
+   * The runtime half of the same guarantee the union gives at compile
+   * time: a plain-JS caller can pass a value that is none of the three,
+   * and the generated enum converter has no default arm, so letting it
+   * through would cross an unwritten buffer as garbage rather than fail.
+   * Refused before native, as the generic input refusal.
+   */
+  it('rejects a requirement value outside the closed union before ever calling native', async () => {
+    vi.mocked(nativeDecryptEvent).mockClear()
+
+    await expect(
+      decryptEvent(
+        scope,
+        { type: 'm.room.encrypted' },
+        'nonsense' as unknown as SenderTrustRequirement,
+      ),
+    ).rejects.toSatisfy(
+      (e: unknown) => isCryptoError(e) && e.kind === 'rejected',
+    )
+
+    expect(nativeDecryptEvent).not.toHaveBeenCalled()
   })
 
   /**

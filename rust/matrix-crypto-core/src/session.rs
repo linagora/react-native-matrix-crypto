@@ -74,12 +74,64 @@ use matrix_sdk_crypto::UserIdentity;
 // it directly.
 use matrix_sdk_crypto::vodozemac::megolm::DecryptionError;
 use matrix_sdk_crypto::{
-    DecryptionSettings, EncryptionSettings, EncryptionSyncChanges, MegolmError, OlmMachine,
-    TrustRequirement,
+    CollectStrategy, DecryptionSettings, EncryptionSettings, EncryptionSyncChanges, MegolmError,
+    OlmMachine, TrustRequirement,
 };
 use serde::Deserialize;
 
 use crate::machine::{with_machine, MachineError};
+
+/// What [`decrypt_event`] requires of a sender's device before it hands an
+/// event to the product.
+///
+/// The closed, library-shaped mirror of upstream's own three tiers
+/// (`matrix-sdk-crypto-0.18.0/src/lib.rs`: `Untrusted`,
+/// `CrossSignedOrLegacy`, `CrossSigned`), named in this crate's own
+/// vocabulary rather than upstream's, on the same terms
+/// [`SenderVerification`] already carries: the sender's *device* is signed
+/// by its owner's cross-signing identity, and that fact is what each
+/// tightened tier checks, whether or not this machine has verified the
+/// owner. Local trust is deliberately absent from the set, exactly as it is
+/// upstream: a comparison or a scan sets local trust in a device, and no
+/// tier takes it, so a carefully compared peer whose device carries no
+/// cross-signature is refused by every tightened tier alike.
+///
+/// This crate's own default is [`Any`](Self::Any), the tier that preserves
+/// this library's behaviour since 0.1.0. It is upstream's most permissive
+/// option, the one upstream documents as "not recommended, per the guidance
+/// of MSC4153", and it is the default because a library cannot know whether
+/// the product's users carry cross-signing identities -- refusing events
+/// from unsigned senders is the product's decision, and this type exists so
+/// the product can make it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SenderTrustRequirement {
+    /// Decrypt events from every sender's device, signed or not.
+    ///
+    /// The historical behaviour, and what a caller passes to keep it. The
+    /// returned [`Envelope`]'s `sender_verification` still carries what
+    /// this machine knows about the sender, so a product that reads it can
+    /// apply the same gate itself -- what this tier buys is not having to.
+    Any,
+    /// Decrypt events from a device signed by its owner's cross-signing
+    /// identity, and from legacy sessions whose sender this machine could
+    /// not record when the session was created.
+    ///
+    /// The tightening a product reaching for "refuse unauthenticated
+    /// senders" wants when it has pre-existing sessions around: events from
+    /// unsigned devices are refused, but history that predates trust
+    /// information keeps decrypting, reading
+    /// [`SenderVerification::NoDeviceInsecureSource`] or
+    /// [`SenderVerification::UnsignedDevice`] on the events that pass on
+    /// legacy grounds alone.
+    IdentitySignedOrLegacy,
+    /// Decrypt events from a device signed by its owner's cross-signing
+    /// identity, and nothing else.
+    ///
+    /// The strictest tier upstream offers. Events from legacy sessions are
+    /// refused along with events from unsigned devices, so a product that
+    /// has never imported history can take this tier directly.
+    IdentitySigned,
+}
 
 /// Settings for `OlmMachine::receive_sync_changes`.
 ///
@@ -88,38 +140,29 @@ use crate::machine::{with_machine, MachineError};
 /// reader has to track down through an extra indirection.
 fn decryption_settings() -> DecryptionSettings {
     // This said "verification lands in M3; revisit this with it." M3 landed
-    // verification, this was revisited, and the answer is that it must not
+    // verification, this was revisited, and the answer was that it must not
     // move yet -- recorded here rather than left as an invitation to make
-    // exactly the wrong change next.
+    // exactly the wrong change next. That answer has since split in two,
+    // and only one half of it is still this line's to give.
     //
-    // `TrustRequirement` has three tiers and none of them is local trust
-    // (`matrix-sdk-crypto-0.18.0/src/lib.rs`: `Untrusted`,
-    // `CrossSignedOrLegacy`, `CrossSigned`). A verification sets local
-    // trust, whether the two people compared a short string or one of them
-    // scanned a code, so tightening this to either cross-signed tier
-    // rejects every event from a peer whose device carries no
-    // cross-signature, however carefully a person compared strings with it
-    // or photographed its screen.
+    // The half that moved is [`decrypt_event`], which now takes a
+    // [`SenderTrustRequirement`] from the caller: the product decides what
+    // a room event's sender must satisfy, and the product is the only layer
+    // that can, because it knows whether its users carry cross-signing
+    // identities. See that type's own doc comment for the three tiers and
+    // why local trust is absent from all of them.
     //
-    // This used to add "which is every deployment this build supports",
-    // and to call the decision one that "becomes makeable when
-    // cross-signing does, not before". Cross-signing landed in M4, so the
-    // second half is spent: the decision is makeable now, and this
-    // milestone deliberately does not take it. What is left is a real
-    // trade rather than an absence, with two sides worth naming before
-    // anyone moves this line.
-    //
-    // Tightening it would refuse events this call returns today, from any
-    // peer without cross-signing, which is a product decision and not a
-    // library one. And it would make
-    // `MegolmError::SenderIdentityNotTrusted` reachable for the first
-    // time, which folds two conditions a product must tell apart into one
-    // `SessionError::UnknownDevice`: "verify this person to read this" and
-    // "this event's provenance is broken, never trust it". See that
-    // variant's own doc comment. So this is not the one-line change it
-    // looks like. `Untrusted` is upstream's own most permissive option,
-    // explicitly documented as "not recommended", and it stays as a
-    // deliberate, named placeholder.
+    // The half that stays is this line. These settings also gate what
+    // [`receive_sync_changes`] accepts, and what crosses that path is not
+    // events the product renders but the to-device traffic the machine
+    // ingests -- room keys, verification messages, key requests. A trust
+    // requirement tightened there would refuse a room key from the user's
+    // own unverified device, and every event that key ever protected would
+    // stop decrypting; there is no tier above `Untrusted` whose refusal
+    // there a library may take on the product's behalf. So this one stays
+    // `Untrusted`, upstream's own most permissive option, explicitly
+    // documented as "not recommended", as a deliberate, named choice about
+    // the ingest path rather than a placeholder.
     DecryptionSettings {
         sender_device_trust_requirement: TrustRequirement::Untrusted,
     }
@@ -272,30 +315,43 @@ pub enum SessionError {
     #[error("the session that encrypted this event was refused by its sender's policy")]
     SessionRefused,
     /// [`decrypt_event`] could not trust the device that supposedly
-    /// encrypted this event, for either of two different reasons this
-    /// kind does not currently distinguish: its identity does not match
-    /// what this machine has on record (unfixable -- nothing the user
-    /// does changes a room key whose own embedded identity disagrees with
-    /// itself), or it does not meet the trust level this call requires
-    /// (fixable by the user verifying the device). The second reason is
-    /// unreachable in M2, which always decrypts with the most permissive
-    /// trust requirement -- see `decryption_settings()` -- so only the
-    /// unfixable case is reachable today, and still is.
+    /// encrypted this event because its identity does not match what this
+    /// machine has on record.
     ///
-    /// The reason it is still unreachable has changed, and the change is
-    /// the part worth reading. This said M3 would make the trust
-    /// requirement configurable and split the two reasons apart, that M3
-    /// did neither, and that it could not, because `TrustRequirement` has
-    /// no local-trust tier and cross-signing did not exist here yet.
-    /// Cross-signing exists here now. Nothing blocks tightening the
-    /// requirement any more; it simply has not been tightened, and
-    /// `decryption_settings()` records why leaving it is a decision rather
-    /// than an oversight. Splitting these two reasons is therefore no
-    /// longer waiting on a capability, it is waiting on the day the second
-    /// reason can occur at all. Until then, do not assume this kind is
-    /// always fixable by verification.
+    /// Unfixable, and distinct from [`SenderNotTrusted`](Self::SenderNotTrusted)
+    /// for that exact reason: nothing the user does changes a room key
+    /// whose own embedded identity disagrees with itself, so a product
+    /// must read this as "this event's provenance is broken, never trust
+    /// it" -- the opposite of that variant's "verify this person to read
+    /// this". This kind used to fold the two together, and the fold was
+    /// documented as one to split "when the arm becomes reachable", which
+    /// the day the trust requirement became configurable made happen. B8
+    /// in the M3 design's own deferred list; dispatched now.
+    ///
+    /// Note that the fieldless shape this kind keeps is the one half of
+    /// the old fold that is about the *machine's records*, not about any
+    /// caller-supplied content: nothing of the mismatch crosses the
+    /// boundary, per the no-payload-content rule.
     #[error("the device that encrypted this event is not trusted")]
     UnknownDevice,
+    /// [`decrypt_event`] was asked for a [`SenderTrustRequirement`] the
+    /// device that encrypted this event does not meet.
+    ///
+    /// A policy gap, not a defect in the event: the device is fine, it
+    /// simply does not clear the trust bar the call required. Fixable by
+    /// the user verifying the device -- or by the product relaxing the
+    /// requirement it asked for -- and distinct from
+    /// [`UnknownDevice`](Self::UnknownDevice) for that exact reason: the
+    /// two want opposite things done about them, and one shared kind
+    /// could not say which. This said "unreachable until the day
+    /// `decryption_settings()` stops passing `Untrusted`", which is the
+    /// day [`decrypt_event`]'s requirement became the caller's to choose.
+    ///
+    /// Not retriable on its own: the same call with the same requirement
+    /// fails the same way every time. What resolves it is a verification,
+    /// or a different requirement.
+    #[error("the sender's device does not meet the trust requirement for decryption")]
+    SenderNotTrusted,
     /// [`decrypt_event`] ran the cryptographic operation and it did not
     /// produce a usable plaintext: a corrupted or tampered ciphertext, a
     /// malformed event, or a decrypted payload that is not a well-formed
@@ -1080,45 +1136,30 @@ fn classify_megolm_error(error: MegolmError) -> SessionError {
         // a spoofing-shaped condition about *who* encrypted this, not
         // about the ciphertext itself. Unfixable: nothing the user does,
         // including verifying the device, changes the fact that the room
-        // key's own embedded identity disagrees with itself.
+        // key's own embedded identity disagrees with itself. This is one
+        // half of the old fold, and the half that keeps `UnknownDevice`;
+        // the other half moved to `SenderNotTrusted` the day the trust
+        // requirement became the caller's to choose.
         MegolmError::MismatchedIdentityKeys(_) => SessionError::UnknownDevice,
 
-        // `decryption_settings()` always passes `TrustRequirement::Untrusted`
-        // (see its own doc comment), under which upstream's
-        // `check_sender_trust_requirement` unconditionally returns `Ok`
-        // (`matrix-sdk-crypto-0.18.0/src/machine/mod.rs`'s own match arm
-        // `TrustRequirement::Untrusted => true`) -- so this arm is
-        // unreachable today, unlike the arm above it. Matched anyway, with
-        // no wildcard, for whenever that requirement is tightened and this
-        // becomes reachable. **This said "for when M3 tightens that
-        // requirement", and M3 did not**, because `TrustRequirement` has no
-        // local-trust tier and the requirement could not be tightened
-        // before cross-signing. M4 landed cross-signing and did not tighten
-        // it either, so this arm is still unreachable; what changed is that
-        // it is no longer unreachable for want of anything. It is a
-        // decision `decryption_settings()` states and deliberately leaves
-        // standing. No milestone is named here now, for the reason that
-        // comment gives.
-        //
-        // Grouped with `MismatchedIdentityKeys` above under the same kind
-        // for now, but the two are not the same shape of failure: this one
-        // is a *policy* gap ("this device is fine, but does not clear the
-        // trust bar this call requires"), fixed by the user verifying the
-        // device -- exactly the opposite of the arm above, which no
-        // verification can fix. `UnknownDevice`'s own doc comment is
-        // written to be true of both rather than implying either fixes the
-        // other. Revisit this merge when the arm becomes reachable: a
-        // product will then need to tell "verify this person to read this"
-        // apart from "this event's provenance is broken, never trust it",
-        // and one shared kind cannot say which. That is B8 in the M3
-        // design's own deferred list, and it stays inert exactly as long as
-        // this arm stays unreachable, which is now a matter of the trust
-        // requirement this crate chooses rather than of anything it lacks.
-        // This said "Revisit this merge in M3", which M3 read and did not
-        // act on because there was nothing yet to split; the same held
-        // through M4, and the trigger to watch for is the day
-        // `decryption_settings()` stops passing `Untrusted`.
-        MegolmError::SenderIdentityNotTrusted(_) => SessionError::UnknownDevice,
+        // The device that sent this session's room key is fine, and does
+        // not clear the trust bar this call required: upstream's
+        // `check_sender_trust_requirement` refused it under the tightened
+        // requirement `decrypt_event` was handed
+        // (`matrix-sdk-crypto-0.18.0/src/machine/mod.rs` -- the
+        // `Untrusted` arm returns `Ok` unconditionally, so this is
+        // unreachable under the default `SenderTrustRequirement::Any` and
+        // reachable under the two tightened tiers). This said the arm was
+        // unreachable "until `decryption_settings()` stops passing
+        // `Untrusted`", and was grouped with `MismatchedIdentityKeys`
+        // above under the same kind, documented as a merge to revisit the
+        // day it became reachable -- a product then needs to tell "verify
+        // this person to read this" apart from "this event's provenance is
+        // broken, never trust it", and one shared kind cannot say which.
+        // That day is now, and the split is `SenderNotTrusted`; see its
+        // own doc comment. B8 in the M3 design's own deferred list,
+        // dispatched.
+        MegolmError::SenderIdentityNotTrusted(_) => SessionError::SenderNotTrusted,
 
         // The event or its decrypted content was malformed, or the
         // ciphertext itself could not be decoded or decrypted -- every
@@ -1148,9 +1189,25 @@ fn classify_megolm_error(error: MegolmError) -> SessionError {
 /// Decryption failure is normal Matrix operation -- a key that has not
 /// arrived yet, a session withheld, a device this machine does not
 /// recognise -- not an exceptional condition, which is why this can return
-/// four distinct [`SessionError`] kinds instead of one opaque failure; see
-/// [`classify_megolm_error`].
-pub async fn decrypt_event(scope: &str, raw_json: &str) -> Result<Envelope, SessionError> {
+/// several distinct [`SessionError`] kinds instead of one opaque failure;
+/// see [`classify_megolm_error`].
+///
+/// `requirement` is the one decision this call cannot make for the caller:
+/// what a sender's device must satisfy before the plaintext is handed over.
+/// [`SenderTrustRequirement::Any`] is the historical default and what every
+/// caller before this parameter existed gets; the two tightened tiers make
+/// [`SessionError::SenderNotTrusted`] reachable for the first time, which
+/// is its own kind rather than a fold into [`SessionError::UnknownDevice`]
+/// for the reason that variant's doc comment gives. Read
+/// [`SenderTrustRequirement`]'s own doc comment before choosing: local
+/// trust is absent from every tier, so a product whose users verify
+/// devices without cross-signing identities should stay on `Any` and gate
+/// on the returned envelope's `sender_verification` instead.
+pub async fn decrypt_event(
+    scope: &str,
+    raw_json: &str,
+    requirement: SenderTrustRequirement,
+) -> Result<Envelope, SessionError> {
     let room_id = parse_scope(scope)?;
     let raw = Raw::<EncryptedEvent>::from_json_string(raw_json.to_owned())
         .map_err(|_| SessionError::MalformedPayload)?;
@@ -1170,15 +1227,24 @@ pub async fn decrypt_event(scope: &str, raw_json: &str) -> Result<Envelope, Sess
 
     let scope = scope.to_owned();
 
+    // Fresh per call, from the caller's requirement, not a cached
+    // constant: the decision this encodes is the caller's, and this is the
+    // only line that carries it to upstream. See `decryption_settings`
+    // for the half of the settings this call deliberately does *not* take
+    // -- the ingest path's requirement stays `Untrusted` there.
+    let settings = DecryptionSettings {
+        sender_device_trust_requirement: match requirement {
+            SenderTrustRequirement::Any => TrustRequirement::Untrusted,
+            SenderTrustRequirement::IdentitySignedOrLegacy => TrustRequirement::CrossSignedOrLegacy,
+            SenderTrustRequirement::IdentitySigned => TrustRequirement::CrossSigned,
+        },
+    };
+
     // `with_machine` already runs inside the library's runtime and holds
     // the machine lock for this closure's duration; see its own doc
     // comment in `machine.rs`.
     let result = with_machine(move |machine| {
-        Box::pin(async move {
-            machine
-                .decrypt_room_event(&raw, &room_id, &decryption_settings())
-                .await
-        })
+        Box::pin(async move { machine.decrypt_room_event(&raw, &room_id, &settings).await })
     })
     .await?;
 
@@ -1295,50 +1361,73 @@ pub async fn share_scope_key(scope: &str, users: &[String]) -> Result<(), Sessio
             let missing = machine
                 .get_missing_sessions(user_ids.iter().map(AsRef::as_ref))
                 .await;
+
+            // The outbound half of the trust decision `decrypt_event`
+            // hands the caller: who gets this scope's key. This said
+            // "verification lands in M3; revisit this with it", then that
+            // the strategy could not move before cross-signing (M4), then
+            // that M4 had landed and left a *condition* to rule on rather
+            // than an absence. The condition is ruled on now, here rather
+            // than by a parameter, and the rule is the one that condition
+            // dictates:
+            //
+            // `EncryptionSettings::default()` carries
+            // `CollectStrategy::AllDevices`, which upstream marks "not
+            // recommended, per the guidance of MSC4153" because it shares
+            // with every unblacklisted device rather than only devices
+            // signed by their owner. The recommended strategy is
+            // identity-based, and it refuses outright when *this* machine
+            // has no verified cross-signing identity of its own
+            // (`SessionRecipientCollectionError::CrossSigningNotSetup`, or
+            // `SendingFromUnverifiedDevice`, before it looks at a single
+            // recipient -- `session_manager/group_sessions/
+            // share_strategy.rs`). So the strategy can only be a
+            // *consequence* of the machine's state, and the consequence
+            // takes both halves: a machine that holds a verified identity
+            // of its own shares identity-based, which is what MSC4153
+            // recommends for it; a machine that never bootstrapped still
+            // has none, keeps `AllDevices`, and keeps working exactly as
+            // it did.
+            //
+            // The check is the same one upstream's own strategy performs
+            // before deciding anything, read through the public
+            // `get_identity` rather than through the store, so the two
+            // cannot drift into disagreeing about what "has an identity"
+            // means. `None` as the timeout: waiting on a pending query
+            // here would depend on the caller draining the pump from
+            // another task while this call holds the machine lock, which
+            // it cannot do -- the same discipline `device_statuses`
+            // documents.
+            //
+            // A store failure falls back to `AllDevices` rather than
+            // propagating, and that is not a silent demotion:
+            // `get_missing_sessions` above and `share_room_key` below run
+            // against the same store and report its failure on their own
+            // terms, so a broken store surfaces through them; the
+            // strategy choice is not the place it does.
+            let sharing_strategy = match machine.get_identity(machine.user_id(), None).await {
+                Ok(Some(UserIdentity::Own(identity))) if identity.is_verified() => {
+                    CollectStrategy::IdentityBasedStrategy
+                }
+                // Every other state falls back to `AllDevices`: no own
+                // identity at all (never bootstrapped), an own identity
+                // this machine cannot vouch for, or a store answer shaped
+                // as someone else's identity. `IdentityBasedStrategy`
+                // would refuse the first two outright, and the third
+                // cannot occur for this machine's own user id, so the
+                // fallback is exactly the set of states where the
+                // identity-based strategy would fail before looking at a
+                // recipient.
+                _ => CollectStrategy::AllDevices,
+            };
             let shared = machine
                 .share_room_key(
                     &room_id,
                     user_ids.iter().map(AsRef::as_ref),
-                    // This said "verification lands in M3; revisit this
-                    // with it." M3 landed verification, this was revisited,
-                    // and the strategy must not move -- for the reason the
-                    // last paragraph below now states rather than defers.
-                    //
-                    // `EncryptionSettings::default()` carries
-                    // `CollectStrategy::AllDevices`, which upstream marks "not
-                    // recommended, per the guidance of MSC4153" because it
-                    // shares with every unblacklisted device rather than only
-                    // devices signed by their owner. It is named here rather
-                    // than inherited silently: it is the outbound mirror of
-                    // this milestone's `TrustRequirement::Untrusted`, and it is
-                    // forced by the same absence: **ours**, not the
-                    // recipients'. This said "no identity is published until
-                    // cross-signing exists", which reads as a claim about
-                    // everyone and is false about peers -- any recipient
-                    // running a mainstream client has one, which is the same
-                    // misreading `SenderVerification`'s doc comment carried
-                    // into 0.1.0. The mechanism is stronger and simpler than
-                    // that sentence said: upstream's identity-based strategy
-                    // refuses outright when *this* machine has no
-                    // cross-signing identity, returning
-                    // `SessionRecipientCollectionError::CrossSigningNotSetup`
-                    // before it looks at a single recipient
-                    // (`session_manager/group_sessions/share_strategy.rs`).
-                    //
-                    // This then said the strategy could not move "before
-                    // cross-signing, which is M4". M4 has landed, so the
-                    // absence that sentence named is gone: a machine that
-                    // has called `bootstrap_identity` holds an identity and
-                    // clears that refusal. The absence became a
-                    // *condition*, and that is why the strategy still does
-                    // not move here. Bootstrapping is the product's call
-                    // and not this library's, so a machine that never
-                    // bootstraps still has none, and an identity-based
-                    // strategy would fail every send such a product makes
-                    // rather than sharing selectively. Moving this line
-                    // means deciding what that product should see, which is
-                    // a decision M4 does not take.
-                    EncryptionSettings::default(),
+                    EncryptionSettings {
+                        sharing_strategy,
+                        ..Default::default()
+                    },
                 )
                 .await;
             // Tracked *after* `share_room_key`, not before, and the
@@ -4788,7 +4877,7 @@ mod tests {
             })
             .to_string();
 
-            decrypt_event("!s:example.org", &raw_event).await
+            decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any).await
         })
         .unwrap();
 
@@ -4871,7 +4960,7 @@ mod tests {
             })
             .to_string();
 
-            decrypt_event("!s:example.org", &raw_event).await
+            decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any).await
         })
         .unwrap_err();
 
@@ -4917,7 +5006,7 @@ mod tests {
             })
             .to_string();
 
-            decrypt_event("!s:example.org", &raw_event).await
+            decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any).await
         })
         .unwrap_err();
 
@@ -4997,7 +5086,7 @@ mod tests {
             })
             .to_string();
 
-            decrypt_event("!s:example.org", &raw_event).await
+            decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any).await
         })
         .unwrap_err();
 
@@ -5075,7 +5164,7 @@ mod tests {
             })
             .to_string();
 
-            decrypt_event("!s:example.org", &raw_event).await
+            decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any).await
         })
         .unwrap_err();
 
@@ -5159,7 +5248,7 @@ mod tests {
             })
             .to_string();
 
-            let err = decrypt_event("!s:example.org", &raw_event)
+            let err = decrypt_event("!s:example.org", &raw_event, SenderTrustRequirement::Any)
                 .await
                 .unwrap_err();
             (err, ciphertext_fragment)
@@ -5180,8 +5269,12 @@ mod tests {
     /// already asserts for `encrypt_event`.
     #[test]
     fn malformed_raw_json_is_rejected_before_any_decryption_is_attempted() {
-        let err =
-            futures::executor::block_on(decrypt_event("!s:example.org", "{oops")).unwrap_err();
+        let err = futures::executor::block_on(decrypt_event(
+            "!s:example.org",
+            "{oops",
+            SenderTrustRequirement::Any,
+        ))
+        .unwrap_err();
         assert_eq!(err, SessionError::MalformedPayload);
     }
 
@@ -5191,7 +5284,12 @@ mod tests {
     /// kind.
     #[test]
     fn a_malformed_scope_is_rejected_for_decryption_too() {
-        let err = futures::executor::block_on(decrypt_event("nonsense", "{}")).unwrap_err();
+        let err = futures::executor::block_on(decrypt_event(
+            "nonsense",
+            "{}",
+            SenderTrustRequirement::Any,
+        ))
+        .unwrap_err();
         assert_eq!(err, SessionError::MalformedIdentifier);
     }
 
@@ -5202,9 +5300,18 @@ mod tests {
     /// discovered by a consumer sent to inspect the wrong argument.
     #[test]
     fn a_bad_scope_and_a_bad_payload_are_told_apart() {
-        let bad_scope = futures::executor::block_on(decrypt_event("nonsense", "{}")).unwrap_err();
-        let bad_payload =
-            futures::executor::block_on(decrypt_event("!s:example.org", "{oops")).unwrap_err();
+        let bad_scope = futures::executor::block_on(decrypt_event(
+            "nonsense",
+            "{}",
+            SenderTrustRequirement::Any,
+        ))
+        .unwrap_err();
+        let bad_payload = futures::executor::block_on(decrypt_event(
+            "!s:example.org",
+            "{oops",
+            SenderTrustRequirement::Any,
+        ))
+        .unwrap_err();
 
         assert_eq!(bad_scope, SessionError::MalformedIdentifier);
         assert_eq!(bad_payload, SessionError::MalformedPayload);

@@ -5,6 +5,7 @@ import type {
   EventEnvelope,
   SasMaterial,
   ScannableCode,
+  SenderTrustRequirement,
   SenderVerification,
   TrustState,
   VerificationStage,
@@ -109,6 +110,24 @@ const undelivered: SenderVerification = {
   reason: 'no_device',
   problem: 'missing',
 }
+
+// `SenderTrustRequirement` is CLOSED too, for the same reason as the three
+// unions above: a product switching on it exhaustively must be told by the
+// compiler when a later version adds a tier, rather than handed a silent
+// default on a trust decision.
+// @ts-expect-error SenderTrustRequirement is closed: a value outside the union is not assignable
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const fabricatedRequirement: SenderTrustRequirement = 'x-fabricated-requirement'
+
+const permissive: SenderTrustRequirement = 'any'
+const legacyTolerant: SenderTrustRequirement = 'identity_signed_or_legacy'
+const strict: SenderTrustRequirement = 'identity_signed'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const requirements: readonly SenderTrustRequirement[] = [
+  permissive,
+  legacyTolerant,
+  strict,
+]
 
 // The digits are a fixed-length tuple, not an array: a caller cannot index
 // past the end of something it believed had three entries, and a record

@@ -497,13 +497,15 @@ export async function createRecovery(
 }
 
 /**
- * Decrypts `raw_json`, an event received for `scope`. Mirrors
- * `decrypt_event`; see its own doc comment in
- * `matrix-crypto-core::session`.
+ * Decrypts `raw_json`, an event received for `scope`, under the sender
+ * trust requirement the caller chooses. Mirrors `decrypt_event`; see its
+ * own doc comment in `matrix-crypto-core::session`, and
+ * `SenderTrustRequirement` above for what the three values mean.
  */
 export async function decryptEvent(
   scope: string,
   rawJson: string,
+  senderTrustRequirement: SenderTrustRequirement,
   asyncOpts_?: { signal: AbortSignal }
 ): Promise<Envelope> /*throws*/ {
   const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -513,7 +515,11 @@ export async function decryptEvent(
       /*rustFutureFunc:*/ () => {
         return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(
           FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(rawJson, nativeModule().rustbuffer_alloc)
+          FfiConverterString.lower(rawJson, nativeModule().rustbuffer_alloc),
+          FfiConverterTypeSenderTrustRequirement.lower(
+            senderTrustRequirement,
+            nativeModule().rustbuffer_alloc
+          )
         );
       },
       /*pollFunc:*/ nativeModule()
@@ -4226,6 +4232,57 @@ const FfiConverterTypeProbeFfiError = (() => {
   return new FFIConverter();
 })();
 
+/**
+ * Mirror of the core's `SenderTrustRequirement`, carrying the UniFFI enum
+ * derive.
+ *
+ * The append-only ordinal rule `VerificationStage` above states in full
+ * applies to this enum as well. Its own order is safe in the one direction
+ * that matters: the first value is the permissive default, so a stale
+ * binding that cannot name a newer variant decodes the unknown ordinal as
+ * `UnexpectedEnumCase` and refuses loudly rather than silently applying
+ * the wrong requirement. Append; never insert; never reorder. The core's
+ * own enum documents what each value means and what refusing under it
+ * costs; this mirror deliberately repeats none of it.
+ */
+export enum SenderTrustRequirement {
+  Any,
+  IdentitySignedOrLegacy,
+  IdentitySigned,
+}
+
+const FfiConverterTypeSenderTrustRequirement = (() => {
+  type TypeName = SenderTrustRequirement;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return SenderTrustRequirement.Any;
+        case 2:
+          return SenderTrustRequirement.IdentitySignedOrLegacy;
+        case 3:
+          return SenderTrustRequirement.IdentitySigned;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value) {
+        case SenderTrustRequirement.Any:
+          return c.writeI32(1);
+        case SenderTrustRequirement.IdentitySignedOrLegacy:
+          return c.writeI32(2);
+        case SenderTrustRequirement.IdentitySigned:
+          return c.writeI32(3);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return 4;
+    }
+  }
+  return new FFIConverter();
+})();
+
 // Error type: SessionFfiError
 export enum SessionFfiError_Tags {
   MalformedPayload = "MalformedPayload",
@@ -4239,6 +4296,7 @@ export enum SessionFfiError_Tags {
   SessionRefused = "SessionRefused",
   MalformedIdentifier = "MalformedIdentifier",
   NotAFailureStatus = "NotAFailureStatus",
+  SenderNotTrusted = "SenderNotTrusted",
 }
 /**
  * Mirror of the core's session error, carrying the UniFFI error derive.
@@ -4587,6 +4645,42 @@ export const SessionFfiError = (() => {
     }
   }
 
+  type SenderNotTrusted__interface = {
+    tag: SessionFfiError_Tags.SenderNotTrusted;
+  };
+  /**
+   * Appended after `NotAFailureStatus` for the same ordinal reason,
+   * not because it belongs at the end. It reads next to
+   * `UnknownDevice`, which is where the core puts it -- the core's own
+   * doc comment records that the two used to be one kind and split the
+   * day the trust requirement became the caller's to choose.
+   */
+  class SenderNotTrusted_
+    extends UniffiError
+    implements SenderNotTrusted__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "SessionFfiError";
+    readonly tag = SessionFfiError_Tags.SenderNotTrusted;
+    constructor() {
+      super("SessionFfiError", "SenderNotTrusted");
+    }
+
+    static new(): SenderNotTrusted_ {
+      return new SenderNotTrusted_();
+    }
+
+    static instanceOf(obj: any): obj is SenderNotTrusted_ {
+      return obj.tag === SessionFfiError_Tags.SenderNotTrusted;
+    }
+    static hasInner(obj: any): obj is SenderNotTrusted_ {
+      return false;
+    }
+  }
+
   function instanceOf(obj: any): obj is SessionFfiError {
     return obj[uniffiTypeNameSymbol] === "SessionFfiError";
   }
@@ -4604,6 +4698,7 @@ export const SessionFfiError = (() => {
     SessionRefused: SessionRefused_,
     MalformedIdentifier: MalformedIdentifier_,
     NotAFailureStatus: NotAFailureStatus_,
+    SenderNotTrusted: SenderNotTrusted_,
   });
 })();
 /**
@@ -4652,7 +4747,8 @@ export type SessionFfiError = InstanceType<
     | "Undecryptable"
     | "SessionRefused"
     | "MalformedIdentifier"
-    | "NotAFailureStatus"]
+    | "NotAFailureStatus"
+    | "SenderNotTrusted"]
 >;
 
 // FfiConverter for enum SessionFfiError
@@ -4683,6 +4779,8 @@ const FfiConverterTypeSessionFfiError = (() => {
           return new SessionFfiError.MalformedIdentifier();
         case 11:
           return new SessionFfiError.NotAFailureStatus();
+        case 12:
+          return new SessionFfiError.SenderNotTrusted();
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -4733,6 +4831,10 @@ const FfiConverterTypeSessionFfiError = (() => {
           c.writeI32(11);
           return;
         }
+        case SessionFfiError_Tags.SenderNotTrusted: {
+          c.writeI32(12);
+          return;
+        }
         default:
           // Throwing from here means that SessionFfiError_Tags hasn't matched an ordinal.
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -4771,6 +4873,9 @@ const FfiConverterTypeSessionFfiError = (() => {
           return 4;
         }
         case SessionFfiError_Tags.NotAFailureStatus: {
+          return 4;
+        }
+        case SessionFfiError_Tags.SenderNotTrusted: {
           return 4;
         }
         default:
@@ -5345,7 +5450,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event() !==
-    26398
+    44961
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_decrypt_event"
@@ -5569,6 +5674,7 @@ export default Object.freeze({
     FfiConverterTypeSasEmoji,
     FfiConverterTypeSasMaterial,
     FfiConverterTypeScannableCode,
+    FfiConverterTypeSenderTrustRequirement,
     FfiConverterTypeSenderVerification,
     FfiConverterTypeSessionFfiError,
     FfiConverterTypeSyncOutcome,

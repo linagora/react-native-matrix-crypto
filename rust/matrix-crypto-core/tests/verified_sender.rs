@@ -86,7 +86,8 @@ use matrix_crypto_core::{
     begin_comparison, confirm_flow, create_identity, create_machine, decrypt_event,
     device_statuses, flow_stage, identity_status, in_runtime, mark_request_sent, read_material,
     receive_sync_changes, request_flow, share_scope_key, take_outgoing_requests, with_machine,
-    FlowId, FlowStage, MachineConfig, OutgoingRequest, SenderVerification, TrustState,
+    FlowId, FlowStage, MachineConfig, OutgoingRequest, SenderTrustRequirement, SenderVerification,
+    TrustState,
 };
 use matrix_sdk_common::ruma::api::client::keys::claim_keys::v3::Response as KeysClaimResponse;
 use matrix_sdk_common::ruma::api::client::keys::get_keys::v3::Response as KeysQueryResponse;
@@ -212,6 +213,36 @@ fn relay_to(body: &str, sender: &str, user_id: &str, device_id: &str) -> Option<
         "type": event_type,
         "content": content,
     }))
+}
+
+/// Whether a to-device request's body addresses the given device, by
+/// reading its `messages` map the way a homeserver would.
+fn addresses(body: &str, user_id: &str, device_id: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|request| {
+            request
+                .get("messages")?
+                .get(user_id)?
+                .get(device_id)
+                .cloned()
+        })
+        .is_some()
+}
+
+/// The withheld code a to-device request carries for the given device,
+/// read from the per-device message's own `code` field -- the one thing
+/// that tells an identity-based withholding (`m.unverified`) apart from
+/// the section 3ter ordering failure (`m.no_olm`).
+fn withheld_code_for(body: &str, user_id: &str, device_id: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("messages")?
+        .get(user_id)?
+        .get(device_id)?
+        .get("code")?
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// The wire body of one request upstream handed back to its caller rather
@@ -1241,7 +1272,7 @@ async fn chain(
         payload,
     )
     .await;
-    let envelope = decrypt_event(SCOPE, &event)
+    let envelope = decrypt_event(SCOPE, &event, SenderTrustRequirement::Any)
         .await
         .expect("the library must decrypt what the bare machine encrypted");
 
@@ -1495,7 +1526,7 @@ fn history_does_not_improve_when_the_sender_is_verified_later() {
             encrypted_event_from(&counterparty.peer, HISTORY_USER, &event_id, HISTORY_PAYLOAD)
                 .await;
 
-        let before = decrypt_event(SCOPE, &event)
+        let before = decrypt_event(SCOPE, &event, SenderTrustRequirement::Any)
             .await
             .expect("the library must decrypt what the counterparty encrypted");
         assert_eq!(
@@ -1532,7 +1563,7 @@ fn history_does_not_improve_when_the_sender_is_verified_later() {
         );
 
         // ---- (2) The same event again. The claim. --------------------
-        let again = decrypt_event(SCOPE, &event)
+        let again = decrypt_event(SCOPE, &event, SenderTrustRequirement::Any)
             .await
             .expect("the same event decrypts the same way, chain or no chain");
         assert_eq!(
@@ -1557,7 +1588,7 @@ fn history_does_not_improve_when_the_sender_is_verified_later() {
             HISTORY_SAME_SESSION_PAYLOAD,
         )
         .await;
-        let same_session = decrypt_event(SCOPE, &same_session_event)
+        let same_session = decrypt_event(SCOPE, &same_session_event, SenderTrustRequirement::Any)
             .await
             .expect("the library must decrypt a later message on the same session");
         assert_eq!(
@@ -1596,7 +1627,7 @@ fn history_does_not_improve_when_the_sender_is_verified_later() {
             HISTORY_ROTATED_PAYLOAD,
         )
         .await;
-        let rotated = decrypt_event(SCOPE, &rotated_event)
+        let rotated = decrypt_event(SCOPE, &rotated_event, SenderTrustRequirement::Any)
             .await
             .expect("the library must decrypt what the rotated session encrypted");
         assert_eq!(
@@ -1612,6 +1643,167 @@ fn history_does_not_improve_when_the_sender_is_verified_later() {
              rather than about a chain that failed. `UnverifiedIdentity` here \
              means the chain did not take effect and nothing above was \
              measured against a working verification"
+        );
+    }));
+}
+
+/// The counterparty with no cross-signing identity at all, for the test
+/// below: a plain bare machine, like `two_parties.rs`'s Bob.
+const IDENTITYLESS_USER: &str = "@identityless:example.org";
+const IDENTITYLESS_DEVICE: &str = "PEERIDENTITYLESS";
+
+/// The outbound half of the trust decision `decrypt_event` hands the
+/// caller: what a bootstrapped machine shares with a user whose device no
+/// identity vouches for.
+///
+/// `share_scope_key` on a machine that holds a verified identity of its own
+/// collects recipients identity-based -- the strategy MSC4153 recommends,
+/// and the one upstream refuses to run for a machine without an identity of
+/// its own, which is why the choice is a consequence of the machine's state
+/// rather than a parameter. The condition that can occur in either
+/// direction is the load-bearing one here: by the second share below the
+/// Olm session *exists* -- the claim has succeeded -- and the key is still
+/// withheld, because the refusal is about the device's identity, not about
+/// the absence of a session. Under `AllDevices`, the strategy this machine
+/// used before it bootstrapped, the second share is exactly the call that
+/// carries the key; `tests/two_parties.rs` and
+/// `tests/decrypt_trust_requirement.rs` hold that half.
+#[test]
+fn a_bootstrapped_machine_withholds_the_scope_key_from_an_identityless_user() {
+    let _serial = SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    futures::executor::block_on(in_runtime(async move {
+        // `library()` bootstraps an identity and asserts it is marked
+        // verified -- the state that arms the identity-based strategy.
+        // Nothing else from its fixture is used: the counterparty here
+        // must be a user with no identity, which the file's other
+        // fixtures deliberately are not.
+        let _ = library().await;
+
+        let peer_user: OwnedUserId = IDENTITYLESS_USER.parse().expect("a literal user id parses");
+        let peer_device: OwnedDeviceId = IDENTITYLESS_DEVICE.into();
+        let peer = OlmMachine::new(&peer_user, &peer_device).await;
+
+        // ---- The peer publishes its device keys, with no identity ------
+        let batch = peer
+            .outgoing_requests()
+            .await
+            .expect("a fresh bare machine has keys to publish");
+        let upload_id = batch
+            .iter()
+            .find(|r| matches!(r.request(), AnyOutgoingRequest::KeysUpload(_)))
+            .expect("a fresh bare machine has a key upload")
+            .request_id()
+            .to_owned();
+        peer.mark_request_as_sent(
+            &upload_id,
+            &keys_upload_response(r#"{"one_time_key_counts":{}}"#),
+        )
+        .await
+        .expect("the bare machine must accept its own upload response");
+        let peer_device_keys =
+            serde_json::to_value(&device_keys_of(&peer, &peer_user, &peer_device).await)
+                .expect("upstream device keys serialise");
+        let (peer_key_id, peer_key) = batch
+            .iter()
+            .find_map(|r| match r.request() {
+                AnyOutgoingRequest::KeysUpload(u) => u
+                    .one_time_keys
+                    .iter()
+                    .next()
+                    .map(|(id, k)| (id.clone(), k.clone())),
+                _ => None,
+            })
+            .expect("a fresh machine always has one-time keys to upload");
+
+        // ---- The library learns the peer's device ----------------------
+        //
+        // The query answer names a device and no master or self-signing
+        // key, exactly as a server answers for a user whose client has no
+        // cross-signing set up.
+        share_scope_key(SCOPE, &[IDENTITYLESS_USER.to_string()])
+            .await
+            .expect("sharing a scope key must not fail");
+        let query = take_outgoing_requests()
+            .await
+            .expect("the pump must be drainable")
+            .into_iter()
+            .find(|r| r.kind == "keys_query")
+            .expect("the machine must ask who exists before it can share with anyone");
+        mark_request_sent(
+            &query.id,
+            &serde_json::json!({
+                "device_keys": { IDENTITYLESS_USER: { IDENTITYLESS_DEVICE: peer_device_keys } }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("a keys-query response must be accepted");
+
+        // ---- First share: the claim, and the identity withholding ------
+        //
+        // The withheld code asserted here is the point: `m.unverified` is
+        // the *identity* refusal, produced by the collect strategy before
+        // anything is encrypted. The missing-session failure would read
+        // `m.no_olm`, and it is not what this fixture is about.
+        share_scope_key(SCOPE, &[IDENTITYLESS_USER.to_string()])
+            .await
+            .expect("sharing a scope key must not fail");
+        let first = take_outgoing_requests()
+            .await
+            .expect("the pump must be drainable");
+        let claim = first
+            .iter()
+            .find(|r| r.kind == "keys_claim")
+            .expect("sharing to a device with no Olm session must queue a keys claim");
+        let first_codes: Vec<String> = first
+            .iter()
+            .filter(|r| r.kind == "to_device")
+            .filter_map(|r| withheld_code_for(&r.body, IDENTITYLESS_USER, IDENTITYLESS_DEVICE))
+            .collect();
+        assert!(
+            first_codes.contains(&"m.unverified".to_string()),
+            "an identity-based share must withhold the key from a user with no \
+             published identity, as m.unverified -- the codes were {first_codes:?}"
+        );
+
+        // The claim is answered, so an Olm session now exists. Under
+        // `AllDevices` -- the strategy this machine used before it
+        // bootstrapped -- the next share is the call that carries the key.
+        mark_request_sent(
+            &claim.id,
+            &serde_json::json!({
+                "one_time_keys": {
+                    IDENTITYLESS_USER: { IDENTITYLESS_DEVICE: { peer_key_id: peer_key } }
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("a keys-claim response must be accepted");
+
+        // ---- Second share: the session exists, the key must not travel --
+        share_scope_key(SCOPE, &[IDENTITYLESS_USER.to_string()])
+            .await
+            .expect("sharing a scope key must not fail");
+        let second = take_outgoing_requests()
+            .await
+            .expect("the pump must be drainable");
+        let key_carrying: Vec<&OutgoingRequest> = second
+            .iter()
+            .filter(|r| {
+                r.kind == "to_device"
+                    && declared_event_type(&r.body) == "m.room.encrypted"
+                    && addresses(&r.body, IDENTITYLESS_USER, IDENTITYLESS_DEVICE)
+            })
+            .collect();
+        assert!(
+            key_carrying.is_empty(),
+            "an identity-based share must never carry the key to a device whose \
+             owner has no published identity, even once the Olm session exists \
+             -- under AllDevices this is exactly the call that delivers it"
         );
     }));
 }

@@ -57,7 +57,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use matrix_crypto_core::{
     create_machine, decrypt_event, encrypt_event, open_store, receive_sync_changes,
-    share_scope_key, take_outgoing_requests, MachineConfig, OutgoingRequest, SessionError,
+    share_scope_key, take_outgoing_requests, MachineConfig, OutgoingRequest,
+    SenderTrustRequirement, SessionError,
 };
 use serde_json::{json, Value};
 
@@ -708,8 +709,12 @@ fn level_two_interoperability_over_a_real_homeserver() {
     let nio_raw_event =
         nio_raw_event.expect("the counterparty's own encrypted event must arrive in /sync");
 
-    let recovered = run(decrypt_event(&scope, &nio_raw_event.to_string()))
-        .expect("the library must decrypt what matrix-nio encrypted");
+    let recovered = run(decrypt_event(
+        &scope,
+        &nio_raw_event.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect("the library must decrypt what matrix-nio encrypted");
     let plaintext: Value = serde_json::from_slice(&recovered.ciphertext)
         .expect("a decrypted content is well-formed JSON");
     assert_eq!(
@@ -733,8 +738,12 @@ fn level_two_interoperability_over_a_real_homeserver() {
             .as_str()
             .expect("a megolm content's ciphertext is a base64 string")
     ));
-    let refusal = run(decrypt_event(&scope, &corrupted_from_nio.to_string()))
-        .expect_err("a corrupted ciphertext must not decrypt");
+    let refusal = run(decrypt_event(
+        &scope,
+        &corrupted_from_nio.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect_err("a corrupted ciphertext must not decrypt");
     assert_eq!(
         refusal,
         SessionError::Undecryptable,
@@ -835,7 +844,7 @@ fn phase_two_reopen_the_store() {
     }))
     .expect("openCryptoStore must reopen a store an earlier process wrote");
 
-    let recovered = run(decrypt_event(&scope, &event))
+    let recovered = run(decrypt_event(&scope, &event, SenderTrustRequirement::Any))
         .expect("the inbound group session must have survived in the store");
     let plaintext: Value = serde_json::from_slice(&recovered.ciphertext)
         .expect("a decrypted content is well-formed JSON");

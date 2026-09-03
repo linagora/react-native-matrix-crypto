@@ -87,6 +87,7 @@ use std::time::{Duration, Instant};
 use matrix_crypto_core::{
     create_machine, decrypt_event, encrypt_event, mark_request_sent, receive_sync_changes,
     share_scope_key, take_outgoing_requests, MachineConfig, OutgoingRequest,
+    SenderTrustRequirement,
 };
 use serde_json::{json, Value};
 
@@ -604,8 +605,12 @@ fn three_devices_across_two_federating_homeservers() {
     );
     let nio1_raw_event =
         nio1_raw_event.expect("the counterparty's own encrypted event must arrive in /sync");
-    let recovered = run(decrypt_event(&scope, &nio1_raw_event.to_string()))
-        .expect("the library must decrypt what matrix-nio encrypted");
+    let recovered = run(decrypt_event(
+        &scope,
+        &nio1_raw_event.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect("the library must decrypt what matrix-nio encrypted");
     let plaintext: Value = serde_json::from_slice(&recovered.ciphertext)
         .expect("a decrypted content is well-formed JSON");
     assert_eq!(
@@ -1085,8 +1090,12 @@ fn three_devices_across_two_federating_homeservers() {
     );
     let nio2_raw_event = nio2_raw_event
         .expect("the late joiner's own encrypted event must arrive in the library's /sync");
-    let recovered = run(decrypt_event(&scope, &nio2_raw_event.to_string()))
-        .expect("the library must decrypt what the federated device encrypted");
+    let recovered = run(decrypt_event(
+        &scope,
+        &nio2_raw_event.to_string(),
+        SenderTrustRequirement::Any,
+    ))
+    .expect("the library must decrypt what the federated device encrypted");
     let plaintext: Value = serde_json::from_slice(&recovered.ciphertext)
         .expect("a decrypted content is well-formed JSON");
     assert_eq!(

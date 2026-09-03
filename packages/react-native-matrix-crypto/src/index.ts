@@ -27,6 +27,7 @@ export type {
   SasEmoji,
   SasMaterial,
   ScannableCode,
+  SenderTrustRequirement,
   SenderVerification,
   SyncDelta,
   TrustState,

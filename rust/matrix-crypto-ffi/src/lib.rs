@@ -929,6 +929,52 @@ impl From<matrix_crypto_core::SenderVerification> for SenderVerification {
     }
 }
 
+/// Mirror of the core's `SenderTrustRequirement`, carrying the UniFFI enum
+/// derive.
+///
+/// The append-only ordinal rule `VerificationStage` above states in full
+/// applies to this enum as well. Its own order is safe in the one direction
+/// that matters: the first value is the permissive default, so a stale
+/// binding that cannot name a newer variant decodes the unknown ordinal as
+/// `UnexpectedEnumCase` and refuses loudly rather than silently applying
+/// the wrong requirement. Append; never insert; never reorder. The core's
+/// own enum documents what each value means and what refusing under it
+/// costs; this mirror deliberately repeats none of it.
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum SenderTrustRequirement {
+    Any,
+    IdentitySignedOrLegacy,
+    IdentitySigned,
+}
+
+impl From<matrix_crypto_core::SenderTrustRequirement> for SenderTrustRequirement {
+    fn from(value: matrix_crypto_core::SenderTrustRequirement) -> Self {
+        // Exhaustive, no wildcard arm. See Global Constraints.
+        match value {
+            matrix_crypto_core::SenderTrustRequirement::Any => Self::Any,
+            matrix_crypto_core::SenderTrustRequirement::IdentitySignedOrLegacy => {
+                Self::IdentitySignedOrLegacy
+            }
+            matrix_crypto_core::SenderTrustRequirement::IdentitySigned => Self::IdentitySigned,
+        }
+    }
+}
+
+impl From<SenderTrustRequirement> for matrix_crypto_core::SenderTrustRequirement {
+    fn from(value: SenderTrustRequirement) -> Self {
+        // Exhaustive in both directions, for the reason above.
+        match value {
+            SenderTrustRequirement::Any => matrix_crypto_core::SenderTrustRequirement::Any,
+            SenderTrustRequirement::IdentitySignedOrLegacy => {
+                matrix_crypto_core::SenderTrustRequirement::IdentitySignedOrLegacy
+            }
+            SenderTrustRequirement::IdentitySigned => {
+                matrix_crypto_core::SenderTrustRequirement::IdentitySigned
+            }
+        }
+    }
+}
+
 /// Mirror of the core's envelope, carrying the UniFFI record derive.
 ///
 /// No `Debug` derive: `ciphertext` is, depending on which call produced
@@ -1055,6 +1101,13 @@ pub enum SessionFfiError {
     /// which is where the core puts it.
     #[error("the status is not one a refused request can carry")]
     NotAFailureStatus,
+    /// Appended after `NotAFailureStatus` for the same ordinal reason,
+    /// not because it belongs at the end. It reads next to
+    /// `UnknownDevice`, which is where the core puts it -- the core's own
+    /// doc comment records that the two used to be one kind and split the
+    /// day the trust requirement became the caller's to choose.
+    #[error("the sender's device does not meet the trust requirement for decryption")]
+    SenderNotTrusted,
 }
 
 impl From<matrix_crypto_core::SessionError> for SessionFfiError {
@@ -1072,6 +1125,7 @@ impl From<matrix_crypto_core::SessionError> for SessionFfiError {
             matrix_crypto_core::SessionError::UnknownDevice => Self::UnknownDevice,
             matrix_crypto_core::SessionError::Undecryptable => Self::Undecryptable,
             matrix_crypto_core::SessionError::NotAFailureStatus => Self::NotAFailureStatus,
+            matrix_crypto_core::SessionError::SenderNotTrusted => Self::SenderNotTrusted,
         }
     }
 }
@@ -1103,12 +1157,17 @@ pub async fn encrypt_event(
         .map_err(Into::into)
 }
 
-/// Decrypts `raw_json`, an event received for `scope`. Mirrors
-/// `decrypt_event`; see its own doc comment in
-/// `matrix-crypto-core::session`.
+/// Decrypts `raw_json`, an event received for `scope`, under the sender
+/// trust requirement the caller chooses. Mirrors `decrypt_event`; see its
+/// own doc comment in `matrix-crypto-core::session`, and
+/// `SenderTrustRequirement` above for what the three values mean.
 #[uniffi::export]
-pub async fn decrypt_event(scope: String, raw_json: String) -> Result<Envelope, SessionFfiError> {
-    matrix_crypto_core::decrypt_event(&scope, &raw_json)
+pub async fn decrypt_event(
+    scope: String,
+    raw_json: String,
+    sender_trust_requirement: SenderTrustRequirement,
+) -> Result<Envelope, SessionFfiError> {
+    matrix_crypto_core::decrypt_event(&scope, &raw_json, sender_trust_requirement.into())
         .await
         .map(Into::into)
         .map_err(Into::into)

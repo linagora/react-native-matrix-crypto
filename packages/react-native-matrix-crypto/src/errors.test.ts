@@ -496,7 +496,7 @@ describe('every generated error variant maps to a kind of its own', () => {
    * grows a variant this number changes here, deliberately, in the same
    * change that adds the mapping.
    */
-  const EXPECTED_VARIANTS = 36
+  const EXPECTED_VARIANTS = 37
 
   it('refuses to pass having walked nothing', () => {
     for (const [name, tags] of GENERATED) {

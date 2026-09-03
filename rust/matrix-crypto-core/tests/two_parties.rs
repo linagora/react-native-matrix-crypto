@@ -57,7 +57,7 @@ use std::collections::BTreeMap;
 use matrix_crypto_core::{
     create_machine, decrypt_event, device_statuses, encrypt_event, in_runtime, mark_request_sent,
     receive_sync_changes, share_scope_key, take_outgoing_requests, with_machine, MachineConfig,
-    OutgoingRequest, SenderVerification, TrustState,
+    OutgoingRequest, SenderTrustRequirement, SenderVerification, TrustState,
 };
 use matrix_sdk_common::ruma::api::client::keys::claim_keys::v3::Response as KeysClaimResponse;
 use matrix_sdk_common::ruma::api::client::keys::get_keys::v3::Response as KeysQueryResponse;
@@ -617,7 +617,7 @@ fn two_parties_exchange_a_group_key_and_each_decrypts_what_the_other_encrypted()
             "$from-bare-machine:example.org",
             bob_encrypted.content.json().get(),
         );
-        let library_envelope = decrypt_event(SCOPE, &bob_event)
+        let library_envelope = decrypt_event(SCOPE, &bob_event, SenderTrustRequirement::Any)
             .await
             .expect("the library must decrypt what the bare machine encrypted");
 
@@ -689,10 +689,13 @@ fn two_parties_exchange_a_group_key_and_each_decrypts_what_the_other_encrypted()
             "$re-addressed:example.org",
             bob_encrypted.content.json().get(),
         );
-        let readdressed_envelope = decrypt_event(SCOPE, &readdressed_event).await.expect(
-            "re-addressing an event does not stop it decrypting -- Megolm \
+        let readdressed_envelope =
+            decrypt_event(SCOPE, &readdressed_event, SenderTrustRequirement::Any)
+                .await
+                .expect(
+                    "re-addressing an event does not stop it decrypting -- Megolm \
                  authenticates the session, not the envelope's sender claim",
-        );
+                );
         assert!(
             readdressed_envelope.ciphertext == BOB_PAYLOAD.as_bytes(),
             "a re-addressed event still decrypts to the same plaintext \
@@ -748,7 +751,7 @@ fn two_parties_exchange_a_group_key_and_each_decrypts_what_the_other_encrypted()
              it is the control for passes for the wrong reason"
         );
 
-        let after_trust = decrypt_event(SCOPE, &bob_event)
+        let after_trust = decrypt_event(SCOPE, &bob_event, SenderTrustRequirement::Any)
             .await
             .expect("the library must still decrypt what the bare machine encrypted");
         assert!(
