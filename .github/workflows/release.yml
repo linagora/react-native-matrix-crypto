@@ -79,8 +79,8 @@ jobs:
       will_publish: ${{ steps.resolve.outputs.will_publish }}
       npm_tag: ${{ steps.resolve.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc' }
 
       - id: resolve
@@ -188,8 +188,8 @@ jobs:
     needs: [preflight, ci]
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc', cache: yarn }
       - run: yarn install --frozen-lockfile
       - run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
@@ -247,7 +247,7 @@ jobs:
             MatrixCryptoFramework.xcframework .build-provenance/ios.env
           echo "Slices built:"
           ls MatrixCryptoFramework.xcframework | sed 's/^/  /'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-xcframework
           path: ${{ runner.temp }}/ios-xcframework.tgz
@@ -287,15 +287,15 @@ jobs:
     needs: [preflight, ci]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc', cache: yarn }
       - run: yarn install --frozen-lockfile
       - run: rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
       # Same exact pin and cache as ci.yml's build-android; cargo-ndk is a
       # required, explicit prerequisite of `ubrn build android`.
       - id: cargo-ndk-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cargo/bin/cargo-ndk
           key: cargo-ndk-${{ runner.os }}-4.1.2
@@ -328,7 +328,7 @@ jobs:
           cd "$PKG"
           tar czf "$RUNNER_TEMP/android-binaries.tgz" \
             android/src/main/jniLibs .build-provenance/android.env
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-binaries
           path: ${{ runner.temp }}/android-binaries.tgz
@@ -344,14 +344,14 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       NPM_TAG: ${{ needs.preflight.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc' }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ios-xcframework
           path: ${{ runner.temp }}/dl
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-binaries
           path: ${{ runner.temp }}/dl
@@ -419,7 +419,7 @@ jobs:
           # it, quietly or otherwise.
           REQUIRE_BUILD_PROVENANCE: '1'
         run: ./scripts/measure-artifacts.sh "release-$TAG"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with: { name: artifact-sizes-release, path: artifact-sizes.json }
 
       # The same rehearsal a contributor runs locally with
@@ -450,7 +450,7 @@ jobs:
             echo "| sha256 | \`$(sha256sum "$TGZ" | cut -d' ' -f1)\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-tarball
           path: ${{ runner.temp }}/release/*.tgz
@@ -471,14 +471,14 @@ jobs:
     env:
       VERSION: ${{ needs.preflight.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc', cache: yarn }
       # For the bundler the load step uses, at the version yarn.lock pins.
       # This install happens before PATH is scrubbed, and installs no Rust
       # anything; the scrub is inside the script, around the consumer install.
       - run: yarn install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: npm-tarball
           path: ${{ runner.temp }}/release
@@ -508,15 +508,15 @@ jobs:
       VERSION: ${{ needs.preflight.outputs.version }}
       NPM_TAG: ${{ needs.preflight.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.nvmrc'
           # Writes an .npmrc into the runner's temp directory that reads the
           # token from NODE_AUTH_TOKEN. No token is ever written into a file
           # in this repository.
           registry-url: 'https://registry.npmjs.org'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: npm-tarball
           path: ${{ runner.temp }}/release
