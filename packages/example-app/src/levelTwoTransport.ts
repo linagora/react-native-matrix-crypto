@@ -36,7 +36,7 @@
 import type { OutgoingRequest } from 'react-native-matrix-crypto'
 
 /**
- * Where the run plan comes from, in the order they are tried.
+ * Where the run plan comes from, in the order they are tried, per platform.
  *
  * Not configuration and not a secret: `10.0.2.2` is the standard Android
  * emulator's alias for the host's loopback interface, and `127.0.0.1` is
@@ -44,11 +44,28 @@ import type { OutgoingRequest } from 'react-native-matrix-crypto'
  * running answers neither, the connection is refused in milliseconds, and
  * this app runs its ordinary probe instead -- see `App.tsx`.
  *
+ * The platform split is not cosmetic, and the weighing is the same one
+ * `android/.../res/xml/network_security_config.xml` records for its own
+ * three names. On the Android emulator `10.0.2.2` is a magic alias for the
+ * host's loopback; on iOS it is not magic at all, it is an ordinary RFC1918
+ * address in 10/8, and on a physical iPhone attached to a 10/8 or LAN
+ * network it routes to whichever host holds it -- a host that could answer
+ * the probe below with a homeserver address and an access token. Nothing of
+ * the user's is at risk, because this app holds nothing of the user's, but
+ * the probe exists for exactly one host and iOS has no use for the address
+ * that names it anywhere but Android: the iOS simulator sees the developer's
+ * machine at `127.0.0.1`, so that is the only address the iOS side probes.
+ * The Android side keeps trying both, because the emulator's alias and the
+ * host's own loopback are the same conductor and the alias is tried first.
+ *
  * The port is fixed rather than discovered because the app has to know it
  * before it can ask anything. Nothing sensitive travels on the way *out*;
  * everything sensitive travels in the reply, over the host's own loopback.
  */
-const PLAN_URLS = ['http://10.0.2.2:8449/plan', 'http://127.0.0.1:8449/plan']
+const PLAN_URLS: Record<'ios' | 'android', string[]> = {
+  android: ['http://10.0.2.2:8449/plan', 'http://127.0.0.1:8449/plan'],
+  ios: ['http://127.0.0.1:8449/plan'],
+}
 
 /** How long to wait for a conductor that is probably not there. */
 const PLAN_TIMEOUT_MS = 2500
@@ -177,6 +194,11 @@ function redactPath(url: string): string {
 /**
  * Asks the conductor for a run plan, or reports that there is none.
  *
+ * `os` selects which hosts the probe may ask, per `PLAN_URLS`' own
+ * weighing: the address list is platform-scoped so that an iOS build never
+ * probes the Android emulator's `10.0.2.2` alias, which on a physical
+ * iPhone is an ordinary routable RFC1918 address.
+ *
  * Returns `null` for every failure, deliberately: "no conductor is running"
  * is the ordinary case (a plain app launch, and every CI run of the probe),
  * and it must be indistinguishable to this app from "the conductor is
@@ -184,8 +206,10 @@ function redactPath(url: string): string {
  * into a failed run -- it asserts that it *found* one, exactly as
  * `scripts/run-probe-on-emulator.sh` does for `PROBE_SUMMARY`.
  */
-export async function fetchLevelTwoPlan(): Promise<LevelTwoPlan | null> {
-  for (const url of PLAN_URLS) {
+export async function fetchLevelTwoPlan(
+  os: 'ios' | 'android',
+): Promise<LevelTwoPlan | null> {
+  for (const url of PLAN_URLS[os]) {
     try {
       const { status, text } = await httpJson('GET', url, {
         timeoutMs: PLAN_TIMEOUT_MS,

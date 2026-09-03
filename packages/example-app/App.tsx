@@ -24,6 +24,7 @@
 
 import React from 'react'
 import {
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -82,9 +83,18 @@ function App({ storeDir = '' }: { storeDir?: string }) {
 
   React.useEffect(() => {
     let cancelled = false
-    void fetchLevelTwoPlan().then(found => {
-      if (!cancelled) setPlan(found)
-    })
+    // Reduced to the two values the probe's URL map speaks: the plan URLs
+    // are platform-scoped, so that an iOS build never probes the Android
+    // emulator's `10.0.2.2` alias, which on a physical iPhone is an
+    // ordinary routable RFC1918 address. A `Platform.OS` value no
+    // platform this app runs on can produce ('web' and friends) takes the
+    // loopback-only list, which is the safe half of the two. See
+    // `PLAN_URLS` in levelTwoTransport.ts.
+    void fetchLevelTwoPlan(Platform.OS === 'android' ? 'android' : 'ios').then(
+      found => {
+        if (!cancelled) setPlan(found)
+      },
+    )
     return () => {
       cancelled = true
     }

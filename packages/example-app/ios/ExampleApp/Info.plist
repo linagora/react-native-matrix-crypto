@@ -26,12 +26,64 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!--
+	  Cleartext HTTP to the host this app is being developed on, and to
+	  nothing else. The Android side of this exact trade is
+	  android/app/src/main/res/xml/network_security_config.xml, which names
+	  the same hosts and records the same weighing; the two files exist to
+	  say the same thing in each platform's own vocabulary.
+
+	  WHY IT EXISTS. The level 2 facade run (packages/example-app/level-two)
+	  stands a throwaway Matrix homeserver and a matrix-nio counterparty up
+	  on the developer's own machine, on the loopback interface, and the app
+	  talks to both. There is no certificate to trust for a container that
+	  exists for ninety seconds, and there should not be: everything here is
+	  loopback traffic between two processes on one machine. An iOS
+	  simulator sees the developer's machine at 127.0.0.1, so that and
+	  localhost (Metro) are the only names this app needs.
+
+	  WHY IT IS NOT NSAllowsLocalNetworking="true". That key is all-or-
+	  nothing for unqualified names, .local domains and every IP address,
+	  IPv4 and IPv6, RFC1918 included; since iOS 17 ATS applies to
+	  IP-address connections again and the key is what re-opens them all.
+	  This app uses exactly one IP address and one host name, so it names
+	  them instead of the class. The two names below cannot leave the
+	  machine.
+
+	  WHAT THIS CANNOT DO, AND WHY THE APP DOES NOT RELY ON IT ALONE. On
+	  iOS 13 through iOS 16 ATS does not apply to IP-address connections at
+	  all, so no key here could have restricted them; on those versions the
+	  closure is the probe itself. The app's plan-fetch URLs are
+	  platform-scoped (src/levelTwoTransport.ts): an iOS build never probes
+	  the Android emulator's 10.0.2.2 alias, which on a physical iPhone
+	  attached to a 10/8 or LAN network is an ordinary routable RFC1918
+	  address a host could answer from, handing this demo app a homeserver
+	  address and an access token. Nothing of the user's is at risk,
+	  because this app holds nothing of the user's, but the exposure was
+	  real and this file is where the two halves of the closure meet.
+
+	  RULE FOR ANYONE ADDING A NAME BELOW: a name here is a name this app
+	  may speak unencrypted HTTP to, on every network it is ever attached
+	  to, not only on the developer's own machine. Weigh it as 10.0.2.2 is
+	  weighed above. A real product ships no such file.
+	-->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
