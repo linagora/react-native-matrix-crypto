@@ -227,6 +227,9 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_device_statuses(
     userId: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(
+    scope: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_event(
     scope: Uint8Array,
     eventType: Uint8Array,
@@ -333,6 +336,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_identity_keys(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_statuses(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_identity_status(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_failed(): number;

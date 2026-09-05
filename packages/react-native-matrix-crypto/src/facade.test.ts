@@ -22,6 +22,7 @@ import {
   buildHistoryBundle,
   createRecovery,
   decryptEvent,
+  discardScopeKey,
   encryptEvent,
   encryptionSlice,
   exportSecrets,
@@ -60,6 +61,7 @@ import {
   buildHistoryBundle as nativeBuildHistoryBundle,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
+  discardScopeKey as nativeDiscardScopeKey,
   deviceIdentityKeys as nativeDeviceIdentityKeys,
   deviceStatuses as nativeDeviceStatuses,
   encryptEvent as nativeEncryptEvent,
@@ -206,6 +208,9 @@ vi.mock('./generated/matrix_crypto', async importOriginal => {
       url: 'mxc://example.org/abc',
     })),
     receiveHistoryBundle: vi.fn(async () => ({ offered: 7, imported: 5 })),
+    // Distinguishable from `false`, so a test that forgot to assert on it
+    // would still notice a value it did not supply flowing back out.
+    discardScopeKey: vi.fn(async () => true),
     takeOutgoingRequests: vi.fn(async () => [
       { id: 'req-1', kind: 'keys_upload', body: '{}' },
     ]),
@@ -3827,6 +3832,32 @@ describe('history sharing', () => {
 
     const error = await buildHistoryBundle(scope).catch((e: unknown) => e)
 
+    expect((error as CryptoError).kind).toBe('malformed_identifier')
+  })
+})
+
+describe('rotating a scope key', () => {
+  it('hands the scope through and reports that a key was replaced', async () => {
+    await expect(discardScopeKey(scope)).resolves.toBe(true)
+    expect(vi.mocked(nativeDiscardScopeKey).mock.calls.at(-1)).toEqual([scope])
+  })
+
+  it('passes `false` through rather than treating it as a failure', async () => {
+    // `false` means there was no key of ours to rotate -- this device has not
+    // encrypted in that scope. A facade that threw here, or coerced it to
+    // true, would report a problem where there is none, or claim a rotation
+    // that did not happen. Both matter: an eviction asserting "the key was
+    // rotated" must be able to tell the two apart.
+    vi.mocked(nativeDiscardScopeKey).mockResolvedValueOnce(false)
+    await expect(discardScopeKey(scope)).resolves.toBe(false)
+  })
+
+  it('reports a scope it could not parse as an identifier', async () => {
+    vi.mocked(nativeDiscardScopeKey).mockRejectedValueOnce(
+      new Error('SessionFfiError.MalformedIdentifier'),
+    )
+    const error = await discardScopeKey(scope).catch((e: unknown) => e)
+    expect(isCryptoError(error)).toBe(true)
     expect((error as CryptoError).kind).toBe('malformed_identifier')
   })
 })
