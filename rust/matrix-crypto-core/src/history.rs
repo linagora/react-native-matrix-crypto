@@ -164,7 +164,25 @@ impl From<crate::session::SessionError> for HistoryError {
 }
 
 /// A room's history, encrypted and ready to upload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// No `Debug` derive, for the reason [`RecoverySetup`](crate::RecoverySetup)
+/// gives: [`secret`](Self::secret) is the key to every room key this account
+/// holds for the scope, and a derived `Debug` leaves it a single `{:?}` away
+/// from a log. The field's own comment asks a caller not to log it; this is
+/// what stops the type from doing it for them.
+///
+/// The doctest below is the guard, taking the trait bound directly rather
+/// than building a value: a `compile_fail` block passes on any compiler
+/// error, so a snippet naming the fields could keep passing after `Debug`
+/// returns, on an error nobody intended. Naming only the type leaves the
+/// missing impl as the sole possible error.
+///
+/// ```compile_fail
+/// fn requires_debug<T: std::fmt::Debug>() {}
+///
+/// requires_debug::<matrix_crypto_core::HistoryBundle>();
+/// ```
+#[derive(Clone, PartialEq, Eq)]
 pub struct HistoryBundle {
     /// The encrypted bundle. Upload these bytes verbatim.
     ///
@@ -473,7 +491,13 @@ mod tests {
     #[test]
     fn an_unparseable_scope_is_an_identifier_fault_in_every_call() {
         for error in [
-            futures::executor::block_on(build_history_bundle(BAD_SCOPE)).unwrap_err(),
+            // Not `unwrap_err()`: that needs `Debug` on the SUCCESS type,
+            // and `HistoryBundle` deliberately has none -- it carries the
+            // key to the bundle. The refusal is read by pattern instead.
+            match futures::executor::block_on(build_history_bundle(BAD_SCOPE)) {
+                Err(error) => error,
+                Ok(_bundle) => panic!("a malformed scope must be refused, not built"),
+            },
             futures::executor::block_on(share_history_bundle(BAD_SCOPE, GOOD_USER, GOOD_URL, "{}"))
                 .unwrap_err(),
             futures::executor::block_on(offered_history_bundle(BAD_SCOPE, GOOD_USER)).unwrap_err(),
