@@ -557,6 +557,7 @@ if (offer !== null) {
 **`bundle_unreadable` means the file came back wrong, not that you called wrong.** The key and the expected hash both come from the announcement rather than from you, so a download that fetched an error page, stopped short, or was altered in the repository fails there instead of being imported.
 
 [MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
+
 ## Removing somebody, so that it means something
 
 Removing a person from a conversation removes their right to _write_. It does not take back the key they already hold, and these keys do not expire: without a rotation they go on reading everything sent afterwards, from a conversation they are no longer in, and nothing anywhere reports it.
