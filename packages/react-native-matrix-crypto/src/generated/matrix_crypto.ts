@@ -2470,6 +2470,10 @@ const FfiConverterTypeEnvelope = (() => {
 
 /**
  * The wire mirror of `matrix_crypto_core::HistoryBundle`.
+ *
+ * **No `Debug` derive**, for the reason `AccountDataEntry` above gives and
+ * the core type repeats: `secret` is the key to every room key this account
+ * holds for the scope.
  */
 export type HistoryBundle = {
   ciphertext: ArrayBuffer;
