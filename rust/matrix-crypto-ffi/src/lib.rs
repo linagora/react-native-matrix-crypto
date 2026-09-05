@@ -1597,3 +1597,157 @@ pub async fn create_identity() -> Result<(), MachineFfiError> {
         .await
         .map_err(Into::into)
 }
+
+/// The wire mirror of `matrix_crypto_core::HistoryError`.
+///
+/// **Appended as a new enum rather than folded into `SessionFfiError`, and
+/// that is the point.** Variants of an existing FFI enum carry ordinals the
+/// generated bindings reproduce as `case N`, so adding to one renumbers
+/// nothing but constrains where new kinds may go for ever after -- the
+/// constraint `SessionFfiError`'s own doc comment is written about. A
+/// separate enum for a separate surface has no such history, and the two
+/// kinds this one has that no session error has (`NoOffer`,
+/// `SenderNotTrusted`) belong to history sharing alone.
+#[derive(Debug, uniffi::Error, thiserror::Error)]
+pub enum HistoryFfiError {
+    #[error("an identifier could not be parsed")]
+    MalformedIdentifier,
+    #[error("the payload could not be parsed")]
+    MalformedPayload,
+    #[error("no crypto machine has been created")]
+    NotInitialised,
+    #[error("the crypto operation failed")]
+    Failed,
+    #[error("no bundle has been offered by that sender for that scope")]
+    NoOffer,
+    #[error("the sender is not trusted enough for this bundle to be imported")]
+    SenderNotTrusted,
+    #[error("the downloaded bundle is not the one that was announced")]
+    BundleUnreadable,
+}
+
+impl From<matrix_crypto_core::HistoryError> for HistoryFfiError {
+    fn from(error: matrix_crypto_core::HistoryError) -> Self {
+        use matrix_crypto_core::HistoryError as Core;
+        match error {
+            Core::MalformedIdentifier => HistoryFfiError::MalformedIdentifier,
+            Core::MalformedPayload => HistoryFfiError::MalformedPayload,
+            Core::NotInitialised => HistoryFfiError::NotInitialised,
+            Core::Failed => HistoryFfiError::Failed,
+            Core::NoOffer => HistoryFfiError::NoOffer,
+            Core::SenderNotTrusted => HistoryFfiError::SenderNotTrusted,
+            Core::BundleUnreadable => HistoryFfiError::BundleUnreadable,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::HistoryBundle`.
+///
+/// **No `Debug` derive**, for the reason `AccountDataEntry` above gives and
+/// the core type repeats: `secret` is the key to every room key this account
+/// holds for the scope.
+#[derive(uniffi::Record)]
+pub struct HistoryBundle {
+    pub ciphertext: Vec<u8>,
+    pub secret: String,
+    pub shared: u32,
+    pub withheld: u32,
+}
+
+impl From<matrix_crypto_core::HistoryBundle> for HistoryBundle {
+    fn from(bundle: matrix_crypto_core::HistoryBundle) -> Self {
+        HistoryBundle {
+            ciphertext: bundle.ciphertext,
+            secret: bundle.secret,
+            shared: bundle.shared,
+            withheld: bundle.withheld,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::HistoryOffer`.
+#[derive(Debug, uniffi::Record)]
+pub struct HistoryOffer {
+    pub url: String,
+}
+
+impl From<matrix_crypto_core::HistoryOffer> for HistoryOffer {
+    fn from(offer: matrix_crypto_core::HistoryOffer) -> Self {
+        HistoryOffer { url: offer.url }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::HistoryImport`.
+#[derive(Debug, uniffi::Record)]
+pub struct HistoryImport {
+    pub offered: u32,
+    pub imported: u32,
+}
+
+impl From<matrix_crypto_core::HistoryImport> for HistoryImport {
+    fn from(report: matrix_crypto_core::HistoryImport) -> Self {
+        HistoryImport {
+            offered: report.offered,
+            imported: report.imported,
+        }
+    }
+}
+
+/// Assembles `scope`'s room keys into a bundle for one recipient, and
+/// encrypts it. Mirrors `build_history_bundle`; see its own doc comment in
+/// `matrix-crypto-core::history`, and that module's own, for why sharing
+/// history is a two-call sequence with the product's upload in between,
+/// why the encryption happens here rather than in the product, and why the
+/// counts come back before anything leaves the device.
+#[uniffi::export]
+pub async fn build_history_bundle(scope: String) -> Result<HistoryBundle, HistoryFfiError> {
+    matrix_crypto_core::build_history_bundle(&scope)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+/// Announces an uploaded bundle's location, and the secret that opens it,
+/// to `user`'s devices. Mirrors `share_history_bundle`; see its own doc
+/// comment for why this must not be called before the upload has
+/// succeeded.
+#[uniffi::export]
+pub async fn share_history_bundle(
+    scope: String,
+    user: String,
+    url: String,
+    secret: String,
+) -> Result<(), HistoryFfiError> {
+    matrix_crypto_core::share_history_bundle(&scope, &user, &url, &secret)
+        .await
+        .map_err(Into::into)
+}
+
+/// Reports where a bundle `sender` has offered for `scope` can be fetched
+/// from, if one has been offered. Mirrors `offered_history_bundle`.
+#[uniffi::export]
+pub async fn offered_history_bundle(
+    scope: String,
+    sender: String,
+) -> Result<Option<HistoryOffer>, HistoryFfiError> {
+    matrix_crypto_core::offered_history_bundle(&scope, &sender)
+        .await
+        .map(|offer| offer.map(Into::into))
+        .map_err(Into::into)
+}
+
+/// Decrypts and imports a downloaded bundle. Mirrors
+/// `receive_history_bundle`; see its own doc comment for why the key is not
+/// a parameter, and for why the sender's trust is checked here rather than
+/// left to upstream, which drops an untrusted bundle and returns success.
+#[uniffi::export]
+pub async fn receive_history_bundle(
+    scope: String,
+    sender: String,
+    ciphertext: Vec<u8>,
+) -> Result<HistoryImport, HistoryFfiError> {
+    matrix_crypto_core::receive_history_bundle(&scope, &sender, &ciphertext)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
