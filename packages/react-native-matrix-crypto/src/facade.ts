@@ -17,6 +17,7 @@ import { toCryptoError } from './errors'
 import {
   acceptVerification as nativeAcceptVerification,
   bootstrapIdentity as nativeBootstrapIdentity,
+  buildHistoryBundle as nativeBuildHistoryBundle,
   cancelVerification as nativeCancelVerification,
   confirmScan as nativeConfirmScan,
   confirmVerification as nativeConfirmVerification,
@@ -31,11 +32,14 @@ import {
   markRequestFailed as nativeMarkRequestFailed,
   markRequestSent as nativeMarkRequestSent,
   offerCodes as nativeOfferCodes,
+  offeredHistoryBundle as nativeOfferedHistoryBundle,
   openCryptoStore as nativeOpenCryptoStore,
   receiveSyncChanges as nativeReceiveSyncChanges,
+  receiveHistoryBundle as nativeReceiveHistoryBundle,
   recoverIdentity as nativeRecoverIdentity,
   requestSelfVerification as nativeRequestSelfVerification,
   requestVerification as nativeRequestVerification,
+  shareHistoryBundle as nativeShareHistoryBundle,
   shareScopeKey as nativeShareScopeKey,
   startVerificationComparison as nativeStartVerificationComparison,
   submitScannedCode as nativeSubmitScannedCode,
@@ -3095,6 +3099,187 @@ export async function getDeviceIdentityKeys(
       deviceId,
     )
     return { curve25519, ed25519 }
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * A scope's past, assembled and ready to be encrypted and uploaded.
+ *
+ * @see {@link buildHistoryBundle}
+ */
+export interface HistoryBundle {
+  /**
+   * The bundle itself, as JSON.
+   *
+   * **This is key material in clear.** Encode it as UTF-8, encrypt it the
+   * way your product encrypts any attachment, and upload the ciphertext. Do
+   * not write it to disk, do not log it, and do not upload it unencrypted.
+   */
+  readonly json: string
+  /**
+   * How many sessions this bundle hands over.
+   *
+   * The number to put in front of a person before they commit to something
+   * irreversible. Zero is an ordinary answer for a scope nothing has been
+   * said in yet, and is not a failure.
+   */
+  readonly shared: number
+  /**
+   * How many sessions were deliberately left out, because they were created
+   * while this scope's history was not shareable.
+   *
+   * The recipient is told these exist, so their client can say "this part
+   * was not shared" rather than showing an unexplained gap.
+   */
+  readonly withheld: number
+}
+
+/** Where a bundle somebody has offered this device can be fetched from. */
+export interface HistoryOffer {
+  /**
+   * The encrypted-file description: where to download it from and the key
+   * to decrypt what comes back, in the shape your product's attachment
+   * downloader already understands.
+   */
+  readonly file: unknown
+}
+
+/** What {@link receiveHistoryBundle} actually did. */
+export interface HistoryImport {
+  /** How many sessions the bundle offered. */
+  readonly offered: number
+  /**
+   * How many were imported.
+   *
+   * Lower than `offered` when the bundle carried keys for a different scope,
+   * which are discarded. Both zero is an empty bundle, not a failure: a
+   * refusal throws `sender_not_trusted` and never returns.
+   */
+  readonly imported: number
+}
+
+/**
+ * Assembles every key this account holds for `scope` into a bundle for one
+ * recipient, so somebody invited today can read what was said before they
+ * arrived.
+ *
+ * **Nothing leaves the device.** This produces the plaintext to encrypt and
+ * upload; {@link shareHistoryBundle} is the call that tells anybody about
+ * it. Calling this and throwing the result away is free and has no effect,
+ * which is deliberate: a product can build the bundle purely to show
+ * {@link HistoryBundle.shared} and let a person decide.
+ *
+ * **The three steps are ordered and the order is not negotiable.** Build,
+ * upload, then announce. Announcing a location nothing has been uploaded to
+ * gives the recipient a URL that 404s and no second chance, because the
+ * announcement is not repeated.
+ *
+ * **What this hands over cannot be taken back.** A key the other device has
+ * is a key it keeps: there is no revocation, no expiry, and no way to narrow
+ * it afterwards. It is a person-level act, not a scope-level one -- it names
+ * one recipient and gives them everything this account can decrypt in that
+ * scope, from its beginning.
+ */
+export async function buildHistoryBundle(
+  scope: CryptoScopeId,
+): Promise<HistoryBundle> {
+  try {
+    const bundle = await nativeBuildHistoryBundle(scope)
+    return {
+      json: bundle.json,
+      shared: bundle.shared,
+      withheld: bundle.withheld,
+    }
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Tells `userId`'s devices where the uploaded bundle for `scope` is.
+ *
+ * `encryptedFile` is what your upload produced -- the location, the key, the
+ * hashes -- passed through as-is. It travels inside end-to-end encrypted
+ * to-device messages, so neither the location nor the key reaches your
+ * homeserver in clear.
+ *
+ * **Call this only once the upload has succeeded.** See
+ * {@link buildHistoryBundle} for why the order matters.
+ *
+ * Like every other outbound message this library produces, the announcement
+ * is queued rather than sent: it has not been made until
+ * {@link takeOutgoingRequests} has handed it over, your product has sent it,
+ * and {@link markRequestSent} has reported it.
+ *
+ * **Announcing twice is not free.** Each call queues a fresh encrypted
+ * message to every one of the recipient's devices; nothing deduplicates
+ * them.
+ */
+export async function shareHistoryBundle(
+  scope: CryptoScopeId,
+  userId: string,
+  encryptedFile: unknown,
+): Promise<void> {
+  try {
+    await nativeShareHistoryBundle(scope, userId, JSON.stringify(encryptedFile))
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Reports whether `senderId` has offered this device a bundle for `scope`,
+ * and if so where to fetch it.
+ *
+ * `null` means no announcement has been recorded. It does not mean none was
+ * sent: the announcement arrives as a to-device event, so it exists for this
+ * device only once a sync carrying it has been fed through
+ * {@link receiveSyncChanges}. A product that expects a bundle and gets
+ * `null` should sync and ask again rather than treat it as a refusal.
+ */
+export async function offeredHistoryBundle(
+  scope: CryptoScopeId,
+  senderId: string,
+): Promise<HistoryOffer | null> {
+  try {
+    const offer = await nativeOfferedHistoryBundle(scope, senderId)
+    if (offer === undefined || offer === null) return null
+    return { file: JSON.parse(offer.fileJson) as unknown }
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Imports a bundle you have downloaded and decrypted, and reports what
+ * landed.
+ *
+ * `bundleJson` is the plaintext recovered from the file
+ * {@link offeredHistoryBundle} pointed at, as a string.
+ *
+ * The announcement it belongs to must already have been ingested, because
+ * that announcement -- not this argument -- is what says who sent the bundle
+ * and which device signed it. A bundle handed to this call without one is
+ * refused with `no_offer` rather than trusted on its own say-so.
+ *
+ * **A sender this device cannot vouch for is refused, loudly.** The
+ * underlying library's own answer in that case is to drop the bundle and
+ * return success, which is indistinguishable from an import that worked;
+ * this call checks first and throws `sender_not_trusted` instead. The bar is
+ * fixed by the protocol at "seen this device before, and nothing about it
+ * has changed" or better, and a product cannot relax it -- what fixes it is
+ * verifying the sender.
+ */
+export async function receiveHistoryBundle(
+  scope: CryptoScopeId,
+  senderId: string,
+  bundleJson: string,
+): Promise<HistoryImport> {
+  try {
+    const report = await nativeReceiveHistoryBundle(scope, senderId, bundleJson)
+    return { offered: report.offered, imported: report.imported }
   } catch (e) {
     throw toCryptoError(e)
   }

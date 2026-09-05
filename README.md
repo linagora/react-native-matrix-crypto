@@ -497,6 +497,60 @@ Scanning needs a signing identity on both sides too, so `identity_not_known` and
 - **A code flow finishing announces `verification_completed`, never `trust_changed`.** The `trust_changed` producer reads the short-string comparison's own final state and a code flow never has one, so a product that waits on that signal after `confirmScan` waits forever. `verification_completed` is what arrives instead, on both screens, and it names the flow rather than the user. Read `getDeviceStatuses` when you get it, which is what both signals tell you to do anyway, and expect another user's devices to turn verified a sync or two later rather than at that instant.
 - **`getVerificationStage` names a code flow's own moment, and two of its answers are still shared.** `code-scanned` is the one stage only a code flow reaches, and reading it is what tells `confirmScan`'s two `wrong_stage` causes apart: nobody has scanned yet, versus the flow is over. This paragraph said that could not be read at all, and adding `code-scanned` is what changed it. What is still shared is `started` and `confirmed`: both flow shapes reach both, so `startVerificationComparison` on a code flow that nobody has scanned yet still answers `comparison_already_started`, whose advice is written for a comparison. Your own state is what tells those apart, because a build that never answered `offerScannableCodes` cannot be in a code flow. **`getVerificationCode` no longer answers `wrong_stage` for a flow that negotiated no code mode**, which it used to do once such a flow had moved on to anything else: the two method lists live on the ready state and nowhere afterwards, so a stage complaint stood in for an answer about methods. It says `peer_cannot_scan`.
 
+## Sharing history with somebody you invite
+
+Someone invited today cannot read what was said yesterday. That is Megolm working as designed, and for most products it is the right answer. For one where people are vouched for and brought in deliberately, it is the thing that makes an invitation feel like a locked door.
+
+[MSC4268] is the protocol's way out, and this library exposes it as three steps with your own upload in the middle.
+
+```ts
+import {
+  buildHistoryBundle,
+  shareHistoryBundle,
+  offeredHistoryBundle,
+  receiveHistoryBundle,
+} from 'react-native-matrix-crypto'
+
+// 1. Assemble. Nothing leaves the device, and calling this changes nothing.
+const bundle = await buildHistoryBundle(scope)
+
+// `bundle.shared` is how many sessions this would hand over. Show it to your
+// user before they agree to something that cannot be undone.
+if (bundle.shared === 0) return
+
+// 2. Encrypt and upload it yourself, exactly as you would any attachment.
+const file = await yourUploader(new TextEncoder().encode(bundle.json))
+
+// 3. Announce where it is. Queued like everything else: pump to send it.
+await shareHistoryBundle(scope, '@entrant:example.org', file)
+```
+
+And on the other side, once a sync carrying the announcement has been through `receiveSyncChanges`:
+
+```ts
+const offer = await offeredHistoryBundle(scope, '@voucher:example.org')
+if (offer !== null) {
+  const bundleJson = await yourDownloader(offer.file)
+  const report = await receiveHistoryBundle(
+    scope,
+    '@voucher:example.org',
+    bundleJson,
+  )
+  // `report.imported` may be lower than `report.offered`: keys for another
+  // scope are discarded.
+}
+```
+
+**The order is not negotiable.** Build, upload, then announce. Announcing a location nothing has been uploaded to gives the recipient a URL that 404s, and the announcement is not repeated.
+
+**What you hand over cannot be taken back.** There is no revocation, no expiry, and no way to narrow it afterwards. It names one recipient and gives them everything this account can decrypt in that scope, from its beginning. `buildHistoryBundle` reports the count before anything leaves the device precisely so a product can put a number in front of a person rather than a verb.
+
+**A sender you cannot vouch for is refused, loudly.** `matrix-sdk-crypto`'s own answer to an untrusted bundle is to drop it and return success, which from inside your process is indistinguishable from an import that worked. `receiveHistoryBundle` checks first and throws `sender_not_trusted` instead. The bar is the protocol's, not yours: the sending device must be one you have seen before with nothing changed about it, or better. What lifts it is verifying them.
+
+**`no_offer` means wait, not retry.** The announcement is a to-device event, so it exists for this device only once a sync carrying it has been fed through `receiveSyncChanges`.
+
+[MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
+
 ## What works today
 
 | Capability                                                                                   | State                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -506,6 +560,7 @@ Scanning needs a signing identity on both sides too, so `identity_not_known` and
 | Real `OlmMachine` identity keys, and a persistent encrypted store surviving restart          | working, storage through `matrix-sdk-sqlite`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `encryptEvent`, `decryptEvent`                                                               | working, group sessions backed by `matrix-sdk-crypto`, proven between two crypto machines with the key travelling through the queue rather than handed over in test code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `receiveSyncChanges`, `shareScopeKey`, `takeOutgoingRequests`, `markRequestSent`             | working, over a typed `SyncDelta` and one shared mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Sharing a scope's history with somebody you invite                                           | working, over [MSC4268] room key bundles: `buildHistoryBundle`, `shareHistoryBundle`, `offeredHistoryBundle`, `receiveHistoryBundle`. The bundle travels through your media repository, because this library performs no request; the counts come back before anything leaves the device, because what it hands over cannot be taken back                                                                                                                                                                                                                                                                                                                                                                  |
 | Interoperability with a third-party Matrix client                                            | proven both directions against `matrix-nio` over a real homeserver, through the Rust core and through the published TypeScript surface on an emulator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Device verification by short string comparison (SAS)                                         | working, in both flow shapes and whichever side opens the comparison, proven against a bare `matrix-sdk-crypto` machine driven directly: an agreement completing, and a genuine disagreement refusing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Device verification by a scannable code                                                      | working, and **claiming nothing until a product answers `offerScannableCodes`**, showing and scanning separately. All three modes the protocol defines. Proven against a bare `matrix-sdk-crypto` machine driven directly, and against mautrix-go over a real homeserver in both directions — an implementation sharing neither protocol code nor Olm with this one. Read by a real camera once, in one mode and one direction, recorded in full in the [design notes](DESIGN-NOTES.md). The library sees no camera and draws no picture: it hands over the bytes and the grid of squares, and the product owns the scanner and the screen                                                                 |

@@ -19,6 +19,7 @@ import {
   confirmScan,
   confirmVerification,
   createCryptoMachine,
+  buildHistoryBundle,
   createRecovery,
   decryptEvent,
   encryptEvent,
@@ -33,13 +34,16 @@ import {
   importSecrets,
   markRequestFailed,
   markRequestSent,
+  offeredHistoryBundle,
   offerScannableCodes,
   openCryptoStore,
+  receiveHistoryBundle,
   receiveSyncChanges,
   recoverIdentity,
   restoreCryptoMachine,
   requestSelfVerification,
   requestVerification,
+  shareHistoryBundle,
   shareScopeKey,
   startVerificationComparison,
   submitScannedCode,
@@ -53,6 +57,7 @@ import {
   confirmScan as nativeConfirmScan,
   confirmVerification as nativeConfirmVerification,
   createCryptoMachine as nativeCreateCryptoMachine,
+  buildHistoryBundle as nativeBuildHistoryBundle,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
   deviceIdentityKeys as nativeDeviceIdentityKeys,
@@ -72,6 +77,9 @@ import {
   SenderTrustRequirement as NativeSenderTrustRequirement,
   SenderVerification as NativeSenderVerification,
   SessionFfiError,
+  offeredHistoryBundle as nativeOfferedHistoryBundle,
+  receiveHistoryBundle as nativeReceiveHistoryBundle,
+  shareHistoryBundle as nativeShareHistoryBundle,
   shareScopeKey as nativeShareScopeKey,
   startVerificationComparison as nativeStartVerificationComparison,
   submitScannedCode as nativeSubmitScannedCode,
@@ -184,6 +192,19 @@ vi.mock('./generated/matrix_crypto', async importOriginal => {
       senderVerification: actual.SenderVerification.UnsignedDevice,
     })),
     shareScopeKey: vi.fn(async () => undefined),
+    // History sharing. The counts differ from each other and from every
+    // other number in this file, so a test that asserted on the wrong field
+    // would read a value it did not supply rather than a coincidence.
+    buildHistoryBundle: vi.fn(async () => ({
+      json: '{"room_keys":[],"withheld":[]}',
+      shared: 7,
+      withheld: 2,
+    })),
+    shareHistoryBundle: vi.fn(async () => undefined),
+    offeredHistoryBundle: vi.fn(async () => ({
+      fileJson: '{"url":"mxc://example.org/abc","key":{"k":"secret"}}',
+    })),
+    receiveHistoryBundle: vi.fn(async () => ({ offered: 7, imported: 5 })),
     takeOutgoingRequests: vi.fn(async () => [
       { id: 'req-1', kind: 'keys_upload', body: '{}' },
     ]),
@@ -3634,5 +3655,128 @@ describe('server-side recovery', () => {
     ).rejects.toSatisfy(
       (e: unknown) => isCryptoError(e) && e.kind === 'not_implemented',
     )
+  })
+})
+
+describe('history sharing', () => {
+  it('hands the scope through and reports what the bundle would give away', async () => {
+    const bundle = await buildHistoryBundle(scope)
+
+    expect(vi.mocked(nativeBuildHistoryBundle).mock.calls.at(-1)).toEqual([
+      scope,
+    ])
+    // The counts are the point of this call: a product shows `shared` to a
+    // person before they commit to something that cannot be undone.
+    expect(bundle.shared).toBe(7)
+    expect(bundle.withheld).toBe(2)
+    expect(bundle.json).toBe('{"room_keys":[],"withheld":[]}')
+  })
+
+  it('serialises the file description the upload produced', async () => {
+    // The adaptation worth pinning: a product hands back the object its
+    // uploader returned, and the native side takes a string. Passing the
+    // object straight through would arrive as "[object Object]" and fail to
+    // parse on the far side, at a point where the bundle has already been
+    // uploaded and the recipient is waiting.
+    const file = { url: 'mxc://example.org/abc', key: { k: 'secret' } }
+    await shareHistoryBundle(scope, '@entrant:example.org', file)
+
+    expect(vi.mocked(nativeShareHistoryBundle).mock.calls.at(-1)).toEqual([
+      scope,
+      '@entrant:example.org',
+      JSON.stringify(file),
+    ])
+  })
+
+  it('parses an offer back into the shape an attachment downloader wants', async () => {
+    const offer = await offeredHistoryBundle(scope, '@voucher:example.org')
+
+    expect(vi.mocked(nativeOfferedHistoryBundle).mock.calls.at(-1)).toEqual([
+      scope,
+      '@voucher:example.org',
+    ])
+    expect(offer?.file).toEqual({
+      url: 'mxc://example.org/abc',
+      key: { k: 'secret' },
+    })
+  })
+
+  it('answers null, not undefined, when nothing has been offered', async () => {
+    // The generated binding returns `undefined` for a Rust `Option::None`.
+    // The facade promises `null`, and a product testing `=== null` on an
+    // `undefined` would conclude an offer exists and go on to download it.
+    vi.mocked(nativeOfferedHistoryBundle).mockResolvedValueOnce(undefined)
+
+    await expect(
+      offeredHistoryBundle(scope, '@voucher:example.org'),
+    ).resolves.toBeNull()
+  })
+
+  it('reports what an import actually took, not what it was offered', async () => {
+    const report = await receiveHistoryBundle(
+      scope,
+      '@voucher:example.org',
+      '{}',
+    )
+
+    expect(vi.mocked(nativeReceiveHistoryBundle).mock.calls.at(-1)).toEqual([
+      scope,
+      '@voucher:example.org',
+      '{}',
+    ])
+    // Two numbers rather than one, and they differ here on purpose: keys for
+    // a different scope are discarded, and a caller shown only `offered`
+    // would report a history that did not arrive.
+    expect(report.offered).toBe(7)
+    expect(report.imported).toBe(5)
+  })
+
+  it('tells a sender it cannot vouch for apart from an empty bundle', async () => {
+    // The whole reason `receiveHistoryBundle` checks the sender before
+    // importing: the underlying library drops an untrusted bundle and
+    // returns success, which is indistinguishable from an import that
+    // worked. This is the kind that has to arrive instead.
+    vi.mocked(nativeReceiveHistoryBundle).mockRejectedValueOnce(
+      new Error('HistoryFfiError.SenderNotTrusted'),
+    )
+
+    const error = await receiveHistoryBundle(
+      scope,
+      '@stranger:example.org',
+      '{}',
+    ).catch((e: unknown) => e)
+
+    expect(isCryptoError(error)).toBe(true)
+    expect((error as CryptoError).kind).toBe('sender_not_trusted')
+    // Not retriable: the same call against the same store fails the same
+    // way, and what fixes it is verifying the sender.
+    expect((error as CryptoError).retriable).toBe(false)
+  })
+
+  it('tells an announcement that has not arrived apart from one that was refused', async () => {
+    vi.mocked(nativeReceiveHistoryBundle).mockRejectedValueOnce(
+      new Error('HistoryFfiError.NoOffer'),
+    )
+
+    const error = await receiveHistoryBundle(
+      scope,
+      '@voucher:example.org',
+      '{}',
+    ).catch((e: unknown) => e)
+
+    expect((error as CryptoError).kind).toBe('no_offer')
+    // The message has to send a product to `receiveSyncChanges`, because
+    // waiting is the fix and retrying this call is not.
+    expect((error as CryptoError).message).toContain('receiveSyncChanges')
+  })
+
+  it('reports a scope it could not parse as an identifier, not a payload', async () => {
+    vi.mocked(nativeBuildHistoryBundle).mockRejectedValueOnce(
+      new Error('HistoryFfiError.MalformedIdentifier'),
+    )
+
+    const error = await buildHistoryBundle(scope).catch((e: unknown) => e)
+
+    expect((error as CryptoError).kind).toBe('malformed_identifier')
   })
 })

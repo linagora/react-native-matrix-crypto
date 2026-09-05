@@ -5,6 +5,7 @@
 //! enforces that in CI.
 
 mod error;
+mod history;
 mod identity;
 mod machine;
 mod observer;
@@ -16,6 +17,10 @@ mod signing;
 mod verification;
 
 pub use error::ProbeError;
+pub use history::{
+    build_history_bundle, offered_history_bundle, receive_history_bundle, share_history_bundle,
+    HistoryBundle, HistoryError, HistoryImport, HistoryOffer,
+};
 pub use identity::{device_identity_keys, device_statuses, DeviceStatus, IdentityKeys, TrustState};
 pub use machine::{create_machine, open_store, with_machine, MachineConfig, MachineError};
 pub use observer::{

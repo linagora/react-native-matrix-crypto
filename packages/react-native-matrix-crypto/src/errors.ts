@@ -316,6 +316,16 @@ export type CryptoErrorKind =
   // that alarmed a person here would be alarming them about their own
   // mis-aim.
   | 'scanned_code_for_another_flow'
+  // ---- history sharing ---------------------------------------------------
+  // `receiveHistoryBundle` was called for a sender who has offered this
+  // device no bundle for that scope. Distinct from an import that brought
+  // nothing back: nothing was refused, because there was nothing to refuse.
+  // What a product does about it is wait, not retry harder -- the
+  // announcement travels as a to-device event, so it exists only once a
+  // sync carrying it has been fed through `receiveSyncChanges`. Deliberately
+  // absent from RETRIABLE: retrying the same call against the same store
+  // fails the same way, and only ingesting more sync changes moves it.
+  | 'no_offer'
   | 'not_implemented'
   | 'not_initialised'
   | 'already_initialised'
@@ -401,7 +411,16 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // product can tell "verify this person to read this" from "this event's
   // provenance is broken", and this map is the only thing that decides
   // whether it can.
+  // Reached from two enums. `SessionFfiError::SenderNotTrusted` is
+  // `decryptEvent`'s: a device that does not clear the trust bar *the
+  // caller asked for*. `HistoryFfiError::SenderNotTrusted` is
+  // `receiveHistoryBundle`'s, and the bar there is not the caller's to set
+  // -- MSC4268 fixes it at TOFU-trusted or better, and a product cannot
+  // relax it. One kind for both because the answer to a person is the same
+  // (verify them, then try again) even though only one of the two has a
+  // knob a developer could turn.
   ['SenderNotTrusted', 'sender_not_trusted'],
+  ['NoOffer', 'no_offer'],
   ['Undecryptable', 'undecryptable'],
   // The remaining three `SessionFfiError` variants (Task 7): `raw_json`
   // that did not parse, an upstream crypto operation that failed for a
@@ -635,6 +654,14 @@ function stringField(
  * when there is nothing better.
  */
 const MESSAGE_BY_KIND: ReadonlyMap<CryptoErrorKind, string> = new Map([
+  [
+    'no_offer',
+    'no history bundle has been offered by that sender for that scope. The announcement is a ' +
+      'to-device event, so it exists for this device only once a sync carrying it has been fed ' +
+      'through receiveSyncChanges: sync, then ask offeredHistoryBundle again, and only call ' +
+      'receiveHistoryBundle once it answers. Nothing was refused here -- there was nothing to ' +
+      'refuse.',
+  ],
   [
     'account_keys_not_fetched',
     'this library cannot yet say what identity this account has, so it will not publish or ' +

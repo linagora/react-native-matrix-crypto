@@ -16,6 +16,52 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.5.0
+
+History sharing. A person invited into a conversation could not read a word
+of what was said before they arrived; this release gives a product the means
+to hand them the past deliberately, and refuses to let it happen by accident.
+
+### Added
+
+- **Four calls implementing [MSC4268] room key bundles**: `buildHistoryBundle`
+  assembles every session this account holds for a scope, `shareHistoryBundle`
+  announces an uploaded bundle's location to one recipient's devices,
+  `offeredHistoryBundle` reports whether somebody has offered this device one,
+  and `receiveHistoryBundle` imports it. The bundle travels through your media
+  repository rather than through this library, which still performs no
+  request: build, upload it yourself, then announce. The README's "Sharing
+  history with somebody you invite" section walks both halves.
+
+- **`buildHistoryBundle` reports the size of the gift before anything leaves
+  the device.** It returns `shared` and `withheld` counts alongside the
+  bundle, and has no side effect, so a product can build one purely to put a
+  number in front of a person. This is the surface's answer to an act that
+  cannot be undone: a key handed over is a key the other device keeps, there
+  is no revocation and no expiry, and it names one recipient rather than a
+  room.
+
+- **Two error kinds.** `no_offer` says no announcement has been recorded for
+  that sender and scope — wait for a sync rather than retry, since the
+  announcement is a to-device event. `sender_not_trusted` is now reachable
+  from a second call: `receiveHistoryBundle` refuses a bundle whose sender
+  this device cannot vouch for. That refusal exists because
+  `matrix-sdk-crypto`'s own answer there is to drop the bundle and return
+  success, which from inside a product is indistinguishable from an import
+  that worked.
+
+### Changed
+
+- **Nothing on the existing surface.** Every call, argument, return shape and
+  error kind that 0.4.0 shipped behaves exactly as it did. The one internal
+  change worth recording is that the rule deciding which of a user's devices
+  may receive this account's keys is now written once and consulted by both
+  the live-key path and the history path, so the two cannot come to disagree:
+  a bundle shared more widely than the live key would hand the past to devices
+  the present is withheld from.
+
+[MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
+
 ## 0.4.0
 
 The two trust decisions that bound this library's cryptographic behaviour
