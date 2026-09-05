@@ -264,7 +264,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_history_bundle(
     scope: Uint8Array,
     sender: Uint8Array,
-    bundleJson: Uint8Array
+    ciphertext: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_sync_changes(
     rawJson: Uint8Array
@@ -285,7 +285,8 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(
     scope: Uint8Array,
     user: Uint8Array,
-    fileJson: Uint8Array
+    url: Uint8Array,
+    secret: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_share_scope_key(
     scope: Uint8Array,

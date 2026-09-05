@@ -196,13 +196,14 @@ vi.mock('./generated/matrix_crypto', async importOriginal => {
     // other number in this file, so a test that asserted on the wrong field
     // would read a value it did not supply rather than a coincidence.
     buildHistoryBundle: vi.fn(async () => ({
-      json: '{"room_keys":[],"withheld":[]}',
+      ciphertext: new Uint8Array([1, 2, 3, 4]).buffer as ArrayBuffer,
+      secret: '{"v":"v2","key":{"k":"opaque"}}',
       shared: 7,
       withheld: 2,
     })),
     shareHistoryBundle: vi.fn(async () => undefined),
     offeredHistoryBundle: vi.fn(async () => ({
-      fileJson: '{"url":"mxc://example.org/abc","key":{"k":"secret"}}',
+      url: 'mxc://example.org/abc',
     })),
     receiveHistoryBundle: vi.fn(async () => ({ offered: 7, imported: 5 })),
     takeOutgoingRequests: vi.fn(async () => [
@@ -3669,36 +3670,59 @@ describe('history sharing', () => {
     // person before they commit to something that cannot be undone.
     expect(bundle.shared).toBe(7)
     expect(bundle.withheld).toBe(2)
-    expect(bundle.json).toBe('{"room_keys":[],"withheld":[]}')
   })
 
-  it('serialises the file description the upload produced', async () => {
-    // The adaptation worth pinning: a product hands back the object its
-    // uploader returned, and the native side takes a string. Passing the
-    // object straight through would arrive as "[object Object]" and fail to
-    // parse on the far side, at a point where the bundle has already been
-    // uploaded and the recipient is waiting.
-    const file = { url: 'mxc://example.org/abc', key: { k: 'secret' } }
-    await shareHistoryBundle(scope, '@entrant:example.org', file)
+  it('gives the ciphertext as bytes, not as the buffer it crossed on', async () => {
+    // The generated binding speaks `ArrayBuffer` for a Rust `Vec<u8>`. A
+    // product uploading `bundle.ciphertext` needs something a body can be
+    // built from, and an `ArrayBuffer` handed to a fetch is not obviously
+    // wrong -- it is silently a different thing in some runtimes.
+    const bundle = await buildHistoryBundle(scope)
+    expect(bundle.ciphertext).toBeInstanceOf(Uint8Array)
+    expect(Array.from(bundle.ciphertext)).toEqual([1, 2, 3, 4])
+  })
+
+  it('never hands back the bundle in clear', async () => {
+    // The reason the encryption lives in the library: a product that could
+    // see the plaintext would be a product that could log or persist every
+    // room key this account holds. There is no such field to reach for.
+    const bundle = await buildHistoryBundle(scope)
+    expect(bundle).not.toHaveProperty('json')
+    expect(bundle).not.toHaveProperty('plaintext')
+  })
+
+  it('passes the location and the secret back untouched', async () => {
+    // The secret is opaque on purpose. Re-serialising it, trimming it, or
+    // parsing and rebuilding it would all "work" until the day the shape
+    // inside changes, so the facade must be provably a pass-through.
+    const secret = '{"v":"v2","key":{"k":"opaque"},"iv":"opaque"}'
+    await shareHistoryBundle(
+      scope,
+      '@entrant:example.org',
+      'mxc://example.org/abc',
+      secret,
+    )
 
     expect(vi.mocked(nativeShareHistoryBundle).mock.calls.at(-1)).toEqual([
       scope,
       '@entrant:example.org',
-      JSON.stringify(file),
+      'mxc://example.org/abc',
+      secret,
     ])
   })
 
-  it('parses an offer back into the shape an attachment downloader wants', async () => {
+  it('reports where an offered bundle lives, and nothing else', async () => {
     const offer = await offeredHistoryBundle(scope, '@voucher:example.org')
 
     expect(vi.mocked(nativeOfferedHistoryBundle).mock.calls.at(-1)).toEqual([
       scope,
       '@voucher:example.org',
     ])
-    expect(offer?.file).toEqual({
-      url: 'mxc://example.org/abc',
-      key: { k: 'secret' },
-    })
+    expect(offer?.url).toBe('mxc://example.org/abc')
+    // No key crosses on the receiving side at all: it arrived in the
+    // announcement and stays in the library.
+    expect(offer).not.toHaveProperty('key')
+    expect(offer).not.toHaveProperty('file')
   })
 
   it('answers null, not undefined, when nothing has been offered', async () => {
@@ -3716,19 +3740,28 @@ describe('history sharing', () => {
     const report = await receiveHistoryBundle(
       scope,
       '@voucher:example.org',
-      '{}',
+      new Uint8Array([9, 9]),
     )
 
-    expect(vi.mocked(nativeReceiveHistoryBundle).mock.calls.at(-1)).toEqual([
-      scope,
-      '@voucher:example.org',
-      '{}',
-    ])
     // Two numbers rather than one, and they differ here on purpose: keys for
     // a different scope are discarded, and a caller shown only `offered`
     // would report a history that did not arrive.
     expect(report.offered).toBe(7)
     expect(report.imported).toBe(5)
+  })
+
+  it('sends a downloaded body that is a view as the view, not its backing store', async () => {
+    // The trap `toArrayBuffer` exists for, met here in its likeliest place:
+    // a download handed to this call is very often a `Uint8Array` over a
+    // larger pooled buffer, and crossing the whole backing store would
+    // present bytes nobody downloaded to the hash check.
+    const backing = new Uint8Array([0, 0, 7, 7, 7, 0, 0])
+    const body = backing.subarray(2, 5)
+
+    await receiveHistoryBundle(scope, '@voucher:example.org', body)
+
+    const sent = vi.mocked(nativeReceiveHistoryBundle).mock.calls.at(-1)?.[2]
+    expect(Array.from(new Uint8Array(sent as ArrayBuffer))).toEqual([7, 7, 7])
   })
 
   it('tells a sender it cannot vouch for apart from an empty bundle', async () => {
@@ -3743,7 +3776,7 @@ describe('history sharing', () => {
     const error = await receiveHistoryBundle(
       scope,
       '@stranger:example.org',
-      '{}',
+      new Uint8Array(),
     ).catch((e: unknown) => e)
 
     expect(isCryptoError(error)).toBe(true)
@@ -3761,13 +3794,30 @@ describe('history sharing', () => {
     const error = await receiveHistoryBundle(
       scope,
       '@voucher:example.org',
-      '{}',
+      new Uint8Array(),
     ).catch((e: unknown) => e)
 
     expect((error as CryptoError).kind).toBe('no_offer')
     // The message has to send a product to `receiveSyncChanges`, because
     // waiting is the fix and retrying this call is not.
     expect((error as CryptoError).message).toContain('receiveSyncChanges')
+  })
+
+  it('tells a download that came back wrong apart from a call made wrong', async () => {
+    // A product that reads 'malformed_payload' goes and inspects its own
+    // arguments. Here the arguments were fine and the file was not, which is
+    // a different thing to go and look at.
+    vi.mocked(nativeReceiveHistoryBundle).mockRejectedValueOnce(
+      new Error('HistoryFfiError.BundleUnreadable'),
+    )
+
+    const error = await receiveHistoryBundle(
+      scope,
+      '@voucher:example.org',
+      new Uint8Array(),
+    ).catch((e: unknown) => e)
+
+    expect((error as CryptoError).kind).toBe('bundle_unreadable')
   })
 
   it('reports a scope it could not parse as an identifier, not a payload', async () => {

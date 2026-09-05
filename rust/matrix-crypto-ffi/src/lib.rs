@@ -1622,6 +1622,8 @@ pub enum HistoryFfiError {
     NoOffer,
     #[error("the sender is not trusted enough for this bundle to be imported")]
     SenderNotTrusted,
+    #[error("the downloaded bundle is not the one that was announced")]
+    BundleUnreadable,
 }
 
 impl From<matrix_crypto_core::HistoryError> for HistoryFfiError {
@@ -1634,6 +1636,7 @@ impl From<matrix_crypto_core::HistoryError> for HistoryFfiError {
             Core::Failed => HistoryFfiError::Failed,
             Core::NoOffer => HistoryFfiError::NoOffer,
             Core::SenderNotTrusted => HistoryFfiError::SenderNotTrusted,
+            Core::BundleUnreadable => HistoryFfiError::BundleUnreadable,
         }
     }
 }
@@ -1641,7 +1644,8 @@ impl From<matrix_crypto_core::HistoryError> for HistoryFfiError {
 /// The wire mirror of `matrix_crypto_core::HistoryBundle`.
 #[derive(Debug, uniffi::Record)]
 pub struct HistoryBundle {
-    pub json: String,
+    pub ciphertext: Vec<u8>,
+    pub secret: String,
     pub shared: u32,
     pub withheld: u32,
 }
@@ -1649,7 +1653,8 @@ pub struct HistoryBundle {
 impl From<matrix_crypto_core::HistoryBundle> for HistoryBundle {
     fn from(bundle: matrix_crypto_core::HistoryBundle) -> Self {
         HistoryBundle {
-            json: bundle.json,
+            ciphertext: bundle.ciphertext,
+            secret: bundle.secret,
             shared: bundle.shared,
             withheld: bundle.withheld,
         }
@@ -1659,14 +1664,12 @@ impl From<matrix_crypto_core::HistoryBundle> for HistoryBundle {
 /// The wire mirror of `matrix_crypto_core::HistoryOffer`.
 #[derive(Debug, uniffi::Record)]
 pub struct HistoryOffer {
-    pub file_json: String,
+    pub url: String,
 }
 
 impl From<matrix_crypto_core::HistoryOffer> for HistoryOffer {
     fn from(offer: matrix_crypto_core::HistoryOffer) -> Self {
-        HistoryOffer {
-            file_json: offer.file_json,
-        }
+        HistoryOffer { url: offer.url }
     }
 }
 
@@ -1686,11 +1689,12 @@ impl From<matrix_crypto_core::HistoryImport> for HistoryImport {
     }
 }
 
-/// Assembles `scope`'s room keys into a bundle for one recipient. Mirrors
-/// `build_history_bundle`; see its own doc comment in
+/// Assembles `scope`'s room keys into a bundle for one recipient, and
+/// encrypts it. Mirrors `build_history_bundle`; see its own doc comment in
 /// `matrix-crypto-core::history`, and that module's own, for why sharing
-/// history is a two-call sequence with the product's upload in between and
-/// why the counts come back before anything leaves the device.
+/// history is a two-call sequence with the product's upload in between,
+/// why the encryption happens here rather than in the product, and why the
+/// counts come back before anything leaves the device.
 #[uniffi::export]
 pub async fn build_history_bundle(scope: String) -> Result<HistoryBundle, HistoryFfiError> {
     matrix_crypto_core::build_history_bundle(&scope)
@@ -1699,16 +1703,18 @@ pub async fn build_history_bundle(scope: String) -> Result<HistoryBundle, Histor
         .map_err(Into::into)
 }
 
-/// Announces an uploaded bundle's location to `user`'s devices. Mirrors
-/// `share_history_bundle`; see its own doc comment for why this must not be
-/// called before the upload has succeeded.
+/// Announces an uploaded bundle's location, and the secret that opens it,
+/// to `user`'s devices. Mirrors `share_history_bundle`; see its own doc
+/// comment for why this must not be called before the upload has
+/// succeeded.
 #[uniffi::export]
 pub async fn share_history_bundle(
     scope: String,
     user: String,
-    file_json: String,
+    url: String,
+    secret: String,
 ) -> Result<(), HistoryFfiError> {
-    matrix_crypto_core::share_history_bundle(&scope, &user, &file_json)
+    matrix_crypto_core::share_history_bundle(&scope, &user, &url, &secret)
         .await
         .map_err(Into::into)
 }
@@ -1726,17 +1732,17 @@ pub async fn offered_history_bundle(
         .map_err(Into::into)
 }
 
-/// Imports a downloaded and decrypted bundle. Mirrors
-/// `receive_history_bundle`; see its own doc comment for why the sender's
-/// trust is checked here rather than left to upstream, which drops an
-/// untrusted bundle and returns success.
+/// Decrypts and imports a downloaded bundle. Mirrors
+/// `receive_history_bundle`; see its own doc comment for why the key is not
+/// a parameter, and for why the sender's trust is checked here rather than
+/// left to upstream, which drops an untrusted bundle and returns success.
 #[uniffi::export]
 pub async fn receive_history_bundle(
     scope: String,
     sender: String,
-    bundle_json: String,
+    ciphertext: Vec<u8>,
 ) -> Result<HistoryImport, HistoryFfiError> {
-    matrix_crypto_core::receive_history_bundle(&scope, &sender, &bundle_json)
+    matrix_crypto_core::receive_history_bundle(&scope, &sender, &ciphertext)
         .await
         .map(Into::into)
         .map_err(Into::into)

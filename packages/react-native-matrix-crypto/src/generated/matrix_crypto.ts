@@ -160,11 +160,12 @@ export async function bootstrapIdentity(asyncOpts_?: {
 }
 
 /**
- * Assembles `scope`'s room keys into a bundle for one recipient. Mirrors
- * `build_history_bundle`; see its own doc comment in
+ * Assembles `scope`'s room keys into a bundle for one recipient, and
+ * encrypts it. Mirrors `build_history_bundle`; see its own doc comment in
  * `matrix-crypto-core::history`, and that module's own, for why sharing
- * history is a two-call sequence with the product's upload in between and
- * why the counts come back before anything leaves the device.
+ * history is a two-call sequence with the product's upload in between,
+ * why the encryption happens here rather than in the product, and why the
+ * counts come back before anything leaves the device.
  */
 export async function buildHistoryBundle(
   scope: string,
@@ -1197,15 +1198,15 @@ export async function probeWithObserver(
 }
 
 /**
- * Imports a downloaded and decrypted bundle. Mirrors
- * `receive_history_bundle`; see its own doc comment for why the sender's
- * trust is checked here rather than left to upstream, which drops an
- * untrusted bundle and returns success.
+ * Decrypts and imports a downloaded bundle. Mirrors
+ * `receive_history_bundle`; see its own doc comment for why the key is not
+ * a parameter, and for why the sender's trust is checked here rather than
+ * left to upstream, which drops an untrusted bundle and returns success.
  */
 export async function receiveHistoryBundle(
   scope: string,
   sender: string,
-  bundleJson: string,
+  ciphertext: ArrayBuffer,
   asyncOpts_?: { signal: AbortSignal }
 ): Promise<HistoryImport> /*throws*/ {
   const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -1216,7 +1217,10 @@ export async function receiveHistoryBundle(
         return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_history_bundle(
           FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
           FfiConverterString.lower(sender, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(bundleJson, nativeModule().rustbuffer_alloc)
+          FfiConverterArrayBuffer.lower(
+            ciphertext,
+            nativeModule().rustbuffer_alloc
+          )
         );
       },
       /*pollFunc:*/ nativeModule()
@@ -1510,14 +1514,16 @@ export function setCryptoObserver(observer: CryptoObserver): void {
 }
 
 /**
- * Announces an uploaded bundle's location to `user`'s devices. Mirrors
- * `share_history_bundle`; see its own doc comment for why this must not be
- * called before the upload has succeeded.
+ * Announces an uploaded bundle's location, and the secret that opens it,
+ * to `user`'s devices. Mirrors `share_history_bundle`; see its own doc
+ * comment for why this must not be called before the upload has
+ * succeeded.
  */
 export async function shareHistoryBundle(
   scope: string,
   user: string,
-  fileJson: string,
+  url: string,
+  secret: string,
   asyncOpts_?: { signal: AbortSignal }
 ): Promise<void> /*throws*/ {
   const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -1528,7 +1534,8 @@ export async function shareHistoryBundle(
         return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(
           FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
           FfiConverterString.lower(user, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(fileJson, nativeModule().rustbuffer_alloc)
+          FfiConverterString.lower(url, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(secret, nativeModule().rustbuffer_alloc)
         );
       },
       /*pollFunc:*/ nativeModule()
@@ -2465,7 +2472,8 @@ const FfiConverterTypeEnvelope = (() => {
  * The wire mirror of `matrix_crypto_core::HistoryBundle`.
  */
 export type HistoryBundle = {
-  json: string;
+  ciphertext: ArrayBuffer;
+  secret: string;
   shared: number;
   withheld: number;
 };
@@ -2492,19 +2500,22 @@ const FfiConverterTypeHistoryBundle = (() => {
   class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
     readFromCursor(c: Cursor): TypeName {
       return {
-        json: FfiConverterString.readFromCursor(c),
+        ciphertext: FfiConverterArrayBuffer.readFromCursor(c),
+        secret: FfiConverterString.readFromCursor(c),
         shared: FfiConverterUInt32.readFromCursor(c),
         withheld: FfiConverterUInt32.readFromCursor(c),
       };
     }
     writeIntoCursor(value: TypeName, c: Cursor): void {
-      FfiConverterString.writeIntoCursor(value.json, c);
+      FfiConverterArrayBuffer.writeIntoCursor(value.ciphertext, c);
+      FfiConverterString.writeIntoCursor(value.secret, c);
       FfiConverterUInt32.writeIntoCursor(value.shared, c);
       FfiConverterUInt32.writeIntoCursor(value.withheld, c);
     }
     allocationSize(value: TypeName): number {
       return (
-        FfiConverterString.allocationSize(value.json) +
+        FfiConverterArrayBuffer.allocationSize(value.ciphertext) +
+        FfiConverterString.allocationSize(value.secret) +
         FfiConverterUInt32.allocationSize(value.shared) +
         FfiConverterUInt32.allocationSize(value.withheld)
       );
@@ -2565,7 +2576,7 @@ const FfiConverterTypeHistoryImport = (() => {
  * The wire mirror of `matrix_crypto_core::HistoryOffer`.
  */
 export type HistoryOffer = {
-  fileJson: string;
+  url: string;
 };
 
 /**
@@ -2590,14 +2601,14 @@ const FfiConverterTypeHistoryOffer = (() => {
   class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
     readFromCursor(c: Cursor): TypeName {
       return {
-        fileJson: FfiConverterString.readFromCursor(c),
+        url: FfiConverterString.readFromCursor(c),
       };
     }
     writeIntoCursor(value: TypeName, c: Cursor): void {
-      FfiConverterString.writeIntoCursor(value.fileJson, c);
+      FfiConverterString.writeIntoCursor(value.url, c);
     }
     allocationSize(value: TypeName): number {
-      return FfiConverterString.allocationSize(value.fileJson);
+      return FfiConverterString.allocationSize(value.url);
     }
   }
   return new FFIConverter();
@@ -3445,6 +3456,7 @@ export enum HistoryFfiError_Tags {
   Failed = "Failed",
   NoOffer = "NoOffer",
   SenderNotTrusted = "SenderNotTrusted",
+  BundleUnreadable = "BundleUnreadable",
 }
 /**
  * The wire mirror of `matrix_crypto_core::HistoryError`.
@@ -3627,6 +3639,35 @@ export const HistoryFfiError = (() => {
     }
   }
 
+  type BundleUnreadable__interface = {
+    tag: HistoryFfiError_Tags.BundleUnreadable;
+  };
+  class BundleUnreadable_
+    extends UniffiError
+    implements BundleUnreadable__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.BundleUnreadable;
+    constructor() {
+      super("HistoryFfiError", "BundleUnreadable");
+    }
+
+    static new(): BundleUnreadable_ {
+      return new BundleUnreadable_();
+    }
+
+    static instanceOf(obj: any): obj is BundleUnreadable_ {
+      return obj.tag === HistoryFfiError_Tags.BundleUnreadable;
+    }
+    static hasInner(obj: any): obj is BundleUnreadable_ {
+      return false;
+    }
+  }
+
   function instanceOf(obj: any): obj is HistoryFfiError {
     return obj[uniffiTypeNameSymbol] === "HistoryFfiError";
   }
@@ -3639,6 +3680,7 @@ export const HistoryFfiError = (() => {
     Failed: Failed_,
     NoOffer: NoOffer_,
     SenderNotTrusted: SenderNotTrusted_,
+    BundleUnreadable: BundleUnreadable_,
   });
 })();
 /**
@@ -3660,7 +3702,8 @@ export type HistoryFfiError = InstanceType<
     | "NotInitialised"
     | "Failed"
     | "NoOffer"
-    | "SenderNotTrusted"]
+    | "SenderNotTrusted"
+    | "BundleUnreadable"]
 >;
 
 // FfiConverter for enum HistoryFfiError
@@ -3681,6 +3724,8 @@ const FfiConverterTypeHistoryFfiError = (() => {
           return new HistoryFfiError.NoOffer();
         case 6:
           return new HistoryFfiError.SenderNotTrusted();
+        case 7:
+          return new HistoryFfiError.BundleUnreadable();
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -3711,6 +3756,10 @@ const FfiConverterTypeHistoryFfiError = (() => {
           c.writeI32(6);
           return;
         }
+        case HistoryFfiError_Tags.BundleUnreadable: {
+          c.writeI32(7);
+          return;
+        }
         default:
           // Throwing from here means that HistoryFfiError_Tags hasn't matched an ordinal.
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -3734,6 +3783,9 @@ const FfiConverterTypeHistoryFfiError = (() => {
           return 4;
         }
         case HistoryFfiError_Tags.SenderNotTrusted: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.BundleUnreadable: {
           return 4;
         }
         default:
@@ -6066,7 +6118,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle() !==
-    42539
+    52497
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle"
@@ -6225,7 +6277,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle() !==
-    28933
+    65110
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle"
@@ -6273,7 +6325,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle() !==
-    824
+    51312
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle"

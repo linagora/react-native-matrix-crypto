@@ -326,6 +326,16 @@ export type CryptoErrorKind =
   // absent from RETRIABLE: retrying the same call against the same store
   // fails the same way, and only ingesting more sync changes moves it.
   | 'no_offer'
+  // The bytes `receiveHistoryBundle` was handed are not the bundle the
+  // announcement described: they will not decrypt under the key it carried,
+  // or their SHA-256 is not the one it promised, or what comes out is not a
+  // bundle. Kept apart from 'malformed_payload' because the diagnosis is
+  // somebody else's: the call's arguments were fine, and what is wrong is
+  // the file that came back -- a download that fetched an error page,
+  // stopped short, or was altered in the repository. Absent from RETRIABLE:
+  // the same bytes fail the same way, though downloading them again is a
+  // reasonable thing for a product to do once.
+  | 'bundle_unreadable'
   | 'not_implemented'
   | 'not_initialised'
   | 'already_initialised'
@@ -421,6 +431,7 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // knob a developer could turn.
   ['SenderNotTrusted', 'sender_not_trusted'],
   ['NoOffer', 'no_offer'],
+  ['BundleUnreadable', 'bundle_unreadable'],
   ['Undecryptable', 'undecryptable'],
   // The remaining three `SessionFfiError` variants (Task 7): `raw_json`
   // that did not parse, an upstream crypto operation that failed for a

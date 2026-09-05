@@ -25,27 +25,40 @@ to hand them the past deliberately, and refuses to let it happen by accident.
 ### Added
 
 - **Four calls implementing [MSC4268] room key bundles**: `buildHistoryBundle`
-  assembles every session this account holds for a scope, `shareHistoryBundle`
-  announces an uploaded bundle's location to one recipient's devices,
-  `offeredHistoryBundle` reports whether somebody has offered this device one,
-  and `receiveHistoryBundle` imports it. The bundle travels through your media
-  repository rather than through this library, which still performs no
-  request: build, upload it yourself, then announce. The README's "Sharing
-  history with somebody you invite" section walks both halves.
+  assembles every session this account holds for a scope and encrypts it,
+  `shareHistoryBundle` announces an uploaded bundle's location and the secret
+  that opens it to one recipient's devices, `offeredHistoryBundle` reports
+  whether somebody has offered this device one, and `receiveHistoryBundle`
+  decrypts and imports it. The bundle travels through your media repository
+  rather than through this library, which still performs no request: build,
+  upload it yourself, then announce. The README's "Sharing history with
+  somebody you invite" section walks both halves.
+
+- **The encryption is this library's, not the product's.** A React Native
+  product has no AES and no SHA-256 to hand, so an API that returned the
+  bundle in clear would be an instruction to implement Matrix's attachment
+  encryption in JavaScript in order to protect every room key an account
+  holds. What crosses the boundary is ciphertext. On the sending side a
+  product handles an opaque secret it passes back and drops; on the receiving
+  side it handles no key material at all, because the key arrived in the
+  announcement this library already recorded.
 
 - **`buildHistoryBundle` reports the size of the gift before anything leaves
   the device.** It returns `shared` and `withheld` counts alongside the
-  bundle, and has no side effect, so a product can build one purely to put a
-  number in front of a person. This is the surface's answer to an act that
-  cannot be undone: a key handed over is a key the other device keeps, there
-  is no revocation and no expiry, and it names one recipient rather than a
-  room.
+  ciphertext, and has no side effect, so a product can build one purely to
+  put a number in front of a person. This is the surface's answer to an act
+  that cannot be undone: a key handed over is a key the other device keeps,
+  there is no revocation and no expiry, and it names one recipient rather
+  than a room.
 
-- **Two error kinds.** `no_offer` says no announcement has been recorded for
+- **Three error kinds.** `no_offer` says no announcement has been recorded for
   that sender and scope — wait for a sync rather than retry, since the
-  announcement is a to-device event. `sender_not_trusted` is now reachable
-  from a second call: `receiveHistoryBundle` refuses a bundle whose sender
-  this device cannot vouch for. That refusal exists because
+  announcement is a to-device event. `bundle_unreadable` says the downloaded
+  file is not the one that was announced: it will not decrypt under the
+  announcement's key, or its hash is not the promised one — the caller's
+  arguments were fine and the file was not. `sender_not_trusted` is now
+  reachable from a second call: `receiveHistoryBundle` refuses a bundle whose
+  sender this device cannot vouch for. That refusal exists because
   `matrix-sdk-crypto`'s own answer there is to drop the bundle and return
   success, which from inside a product is indistinguishable from an import
   that worked.

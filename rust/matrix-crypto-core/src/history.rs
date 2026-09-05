@@ -18,28 +18,40 @@
 //! # What upstream gives, and what this module had to write
 //!
 //! `matrix-sdk-crypto` 0.18 already implements every cryptographic step:
-//! `Store::build_room_key_bundle` assembles it,
+//! `Store::build_room_key_bundle` assembles it, `AttachmentEncryptor` and
+//! `AttachmentDecryptor` encrypt and decrypt the file,
 //! `OlmMachine::share_room_key_bundle_data` encrypts the announcement to the
 //! recipient's devices, the ordinary to-device decryption path records an
 //! arriving announcement, and `Store::receive_room_key_bundle` imports it.
 //! None of that is exposed to a React Native product, and that exposure is
 //! all this module is.
 //!
-//! # This library still performs no request
+//! # This library still performs no request, and still holds the keys
 //!
 //! The bundle has to travel through the media repository, and this crate
-//! issues no HTTP -- the same rule `recovery.rs` works under. So the split
-//! is: this module produces the bundle's bytes and the product uploads
-//! them; this module says where an offered bundle lives and the product
-//! downloads it. Encryption of the file itself is the product's, because
-//! it is ordinary Matrix attachment encryption rather than anything Megolm
-//! knows about.
+//! issues no HTTP -- the same rule `recovery.rs` works under. So the product
+//! uploads and downloads.
 //!
-//! That makes the sending half two calls with the product's own work in
+//! **It does not encrypt.** That split was tried the other way round first,
+//! with [`build_history_bundle`] returning the bundle in clear for the
+//! product to encrypt itself, and consuming it is what showed the mistake: a
+//! React Native product has no AES and no SHA-256 to hand, so the API was
+//! an instruction to implement Matrix's attachment encryption in JavaScript,
+//! on Hermes, correctly, in order to protect *every room key this account
+//! holds*. The one place in this system that already links AES and SHA-256
+//! is this crate. So it does it, and what crosses the boundary is
+//! ciphertext.
+//!
+//! What that buys, precisely: on the sending side the product handles an
+//! opaque secret it must pass back and never store, and on the receiving
+//! side it handles no key material at all -- the key came in the
+//! announcement, which this library already holds.
+//!
+//! The sending half is therefore two calls with the product's upload in
 //! between, and the ordering is not negotiable: [`build_history_bundle`],
-//! then upload, then [`share_history_bundle`]. Announcing a location
-//! nothing has been uploaded to yet gives the invitee a URL that 404s and
-//! no second chance, because the announcement is not repeated.
+//! then upload, then [`share_history_bundle`]. Announcing a location nothing
+//! has been uploaded to yet gives the invitee a URL that 404s and no second
+//! chance, because the announcement is not repeated.
 //!
 //! # What a caller must understand before using this at all
 //!
@@ -58,13 +70,16 @@
 //!
 //! [MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
 
+use std::io::{Cursor, Read};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use matrix_sdk_common::ruma::events::room::EncryptedFile;
+use matrix_sdk_common::ruma::OwnedMxcUri;
 use matrix_sdk_crypto::olm::SenderData;
 use matrix_sdk_crypto::types::events::room_key_bundle::RoomKeyBundleContent;
 use matrix_sdk_crypto::types::room_history::RoomKeyBundle;
+use matrix_sdk_crypto::{AttachmentDecryptor, AttachmentEncryptor, MediaEncryptionInfo};
 
 use crate::machine::{with_machine, MachineError};
 use crate::session::{collect_strategy, parse_scope, parse_user, queue_to_device_requests};
@@ -76,12 +91,12 @@ use crate::session::{collect_strategy, parse_scope, parse_user, queue_to_device_
 /// carry back across the boundary.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum HistoryError {
-    /// A `scope` or user id handed to this call is not a parseable
-    /// identifier.
+    /// A `scope`, user id, or upload location handed to this call is not a
+    /// parseable identifier.
     #[error("an identifier could not be parsed")]
     MalformedIdentifier,
-    /// The encrypted-file description, or the bundle itself, did not parse
-    /// into the shape this function accepts.
+    /// The opaque secret handed back to [`share_history_bundle`] is not one
+    /// this library produced.
     #[error("the payload could not be parsed")]
     MalformedPayload,
     /// No crypto machine has been created yet.
@@ -117,6 +132,17 @@ pub enum HistoryError {
     /// changed, is refused.
     #[error("the sender is not trusted enough for this bundle to be imported")]
     SenderNotTrusted,
+    /// The downloaded bytes are not the bundle the announcement described.
+    ///
+    /// Either they will not decrypt under the key the announcement carried,
+    /// or they decrypt and their SHA-256 is not the one the announcement
+    /// promised, or what comes out is not a bundle. Kept apart from
+    /// [`MalformedPayload`](Self::MalformedPayload) because the diagnosis is
+    /// somebody else's: the caller's arguments were fine, and what is wrong
+    /// is the file that came back -- a download that fetched an error page,
+    /// a truncated body, or bytes that were altered in the repository.
+    #[error("the downloaded bundle is not the one that was announced")]
+    BundleUnreadable,
 }
 
 impl From<MachineError> for HistoryError {
@@ -137,15 +163,24 @@ impl From<crate::session::SessionError> for HistoryError {
     }
 }
 
-/// A room's history, assembled and ready to be encrypted and uploaded.
+/// A room's history, encrypted and ready to upload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryBundle {
-    /// The bundle itself, as JSON, to be encrypted and uploaded by the
-    /// product exactly as it stands.
+    /// The encrypted bundle. Upload these bytes verbatim.
     ///
-    /// **This is key material in clear.** It must not be written to disk,
-    /// logged, or sent anywhere but an encrypted upload.
-    pub json: String,
+    /// There is no key in here and nothing to protect beyond the ordinary
+    /// care an upload deserves: the key that opens it is in
+    /// [`secret`](Self::secret).
+    pub ciphertext: Vec<u8>,
+    /// Opaque. Hand it back to [`share_history_bundle`] unchanged, once the
+    /// upload has succeeded.
+    ///
+    /// **It contains the key that decrypts the bundle**, which is to say the
+    /// key to every room key this account holds for that scope. It is
+    /// deliberately opaque rather than structured, because a caller has no
+    /// reason to read it and every reason not to keep it: do not log it, do
+    /// not write it to disk, and drop it once the announcement is made.
+    pub secret: String,
     /// How many Megolm sessions this bundle hands over.
     ///
     /// The number to put in front of a person before they commit to an
@@ -165,9 +200,12 @@ pub struct HistoryBundle {
 /// Where a bundle somebody has offered this device can be fetched from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryOffer {
-    /// The `EncryptedFile` description, as JSON: the MXC URI to download
-    /// and the key to decrypt what comes back.
-    pub file_json: String,
+    /// The `mxc://` URI to download.
+    ///
+    /// Only the location. The key that opens what comes back arrived in the
+    /// same announcement and stays in this library, which is why
+    /// [`receive_history_bundle`] takes the downloaded bytes and not a key.
+    pub url: String,
 }
 
 /// What an import actually did.
@@ -185,14 +223,18 @@ pub struct HistoryImport {
 }
 
 /// Assembles every room key this account holds for `scope` into a bundle
-/// for a single recipient.
+/// for a single recipient, and encrypts it.
 ///
-/// Nothing leaves the device. The result is the plaintext to encrypt and
-/// upload; [`share_history_bundle`] is the call that tells anybody about
-/// it, and it must not be made until the upload has succeeded.
+/// Nothing leaves the device. The result is ciphertext to upload and a
+/// secret to hand back; [`share_history_bundle`] is the call that tells
+/// anybody about it, and it must not be made until the upload has
+/// succeeded.
 ///
 /// Cheap to call and free of side effects, which is deliberate: a product
-/// can build the bundle purely to show its size, and abandon it.
+/// can build the bundle purely to show its size, and abandon it. Two calls
+/// produce two different keys and two different ciphertexts for the same
+/// history, which costs nothing here -- the discarded one was never
+/// announced, so nobody can fetch it and nobody holds its key.
 pub async fn build_history_bundle(scope: &str) -> Result<HistoryBundle, HistoryError> {
     let room_id = parse_scope(scope)?;
 
@@ -204,21 +246,33 @@ pub async fn build_history_bundle(scope: &str) -> Result<HistoryBundle, HistoryE
 
     let shared = bundle.room_keys.len() as u32;
     let withheld = bundle.withheld.len() as u32;
-    let json = serde_json::to_string(&bundle).map_err(|_upstream| HistoryError::Failed)?;
+
+    let plaintext = serde_json::to_vec(&bundle).map_err(|_upstream| HistoryError::Failed)?;
+    let mut source = Cursor::new(plaintext);
+    let mut encryptor = AttachmentEncryptor::new(&mut source);
+    let mut ciphertext = Vec::new();
+    encryptor
+        .read_to_end(&mut ciphertext)
+        .map_err(|_upstream| HistoryError::Failed)?;
+    let secret =
+        serde_json::to_string(&encryptor.finish()).map_err(|_upstream| HistoryError::Failed)?;
 
     Ok(HistoryBundle {
-        json,
+        ciphertext,
+        secret,
         shared,
         withheld,
     })
 }
 
-/// Tells `user`'s devices where the uploaded bundle for `scope` is.
+/// Tells `user`'s devices where the uploaded bundle for `scope` is, and how
+/// to open it.
 ///
-/// `file_json` is the `EncryptedFile` the upload produced -- the MXC URI,
-/// the key, the hashes -- serialised as JSON. It is announced over
-/// Olm-encrypted to-device messages, so the location and the decryption key
-/// never reach the homeserver in clear.
+/// `url` is the `mxc://` URI the upload returned. `secret` is
+/// [`HistoryBundle::secret`], handed back unchanged. The two are joined here
+/// into the announcement, which travels over Olm-encrypted to-device
+/// messages, so neither the location nor the key reaches the homeserver in
+/// clear.
 ///
 /// The requests are queued for `take_outgoing_requests` like every other
 /// outbound message this library produces; this call sends nothing itself,
@@ -236,12 +290,31 @@ pub async fn build_history_bundle(scope: &str) -> Result<HistoryBundle, HistoryE
 pub async fn share_history_bundle(
     scope: &str,
     user: &str,
-    file_json: &str,
+    url: &str,
+    secret: &str,
 ) -> Result<(), HistoryError> {
     let room_id = parse_scope(scope)?;
     let user_id = parse_user(user)?;
+
+    let location = OwnedMxcUri::from(url);
+    if !location.is_valid() {
+        return Err(HistoryError::MalformedIdentifier);
+    }
+
+    // Rebuilt through serde rather than a struct literal, because ruma marks
+    // `EncryptedFile` `#[non_exhaustive]` and this crate is not ruma. That is
+    // not a workaround so much as the shape the type already has: the secret
+    // *is* the serialised `MediaEncryptionInfo`, whose two fields flatten
+    // into exactly the file description minus its location, so adding `url`
+    // to the object it deserialises from is the whole conversion.
+    let mut described: serde_json::Value =
+        serde_json::from_str(secret).map_err(|_upstream| HistoryError::MalformedPayload)?;
+    let Some(fields) = described.as_object_mut() else {
+        return Err(HistoryError::MalformedPayload);
+    };
+    fields.insert("url".to_owned(), serde_json::Value::String(url.to_owned()));
     let file: EncryptedFile =
-        serde_json::from_str(file_json).map_err(|_upstream| HistoryError::MalformedPayload)?;
+        serde_json::from_value(described).map_err(|_upstream| HistoryError::MalformedPayload)?;
 
     let requests = with_machine(move |machine| {
         Box::pin(async move {
@@ -261,7 +334,7 @@ pub async fn share_history_bundle(
 }
 
 /// Reports whether `sender` has offered this device a bundle for `scope`,
-/// and if so where it is.
+/// and if so where to fetch it.
 ///
 /// The announcement arrives as an ordinary to-device event and is recorded
 /// by `receive_sync_changes` like everything else, so this is a read of
@@ -287,37 +360,36 @@ pub async fn offered_history_bundle(
     .await?
     .map_err(|_upstream| HistoryError::Failed)?;
 
-    stored
-        .map(|data| {
-            serde_json::to_string(&data.bundle_data.file)
-                .map(|file_json| HistoryOffer { file_json })
-                .map_err(|_upstream| HistoryError::Failed)
-        })
-        .transpose()
+    Ok(stored.map(|data| HistoryOffer {
+        url: data.bundle_data.file.url.to_string(),
+    }))
 }
 
-/// Imports a downloaded and decrypted bundle, and reports what landed.
+/// Decrypts and imports a bundle the product has downloaded, and reports
+/// what landed.
 ///
-/// `bundle_json` is the plaintext recovered from the file
-/// [`offered_history_bundle`] pointed at. The announcement it belongs to
-/// must already have been ingested, because that announcement -- not this
-/// argument -- is what says who sent the bundle and which device's keys
-/// signed it; a bundle handed to this call without one is refused with
-/// [`HistoryError::NoOffer`] rather than trusted on its own say-so.
+/// `ciphertext` is the file [`offered_history_bundle`] pointed at, exactly
+/// as it came back. The key that opens it is not a parameter: it arrived in
+/// the announcement, which this library recorded, so a product that
+/// downloads bytes has everything it needs and never handles key material.
 ///
-/// The sender's trustworthiness is checked before the import rather than
-/// left to upstream, which drops an untrusted bundle and returns success.
-/// See [`HistoryError::SenderNotTrusted`].
+/// The announcement must already have been ingested for the same reason it
+/// carries the key -- it is also what says who sent the bundle and which
+/// device signed it. A download handed to this call without one is refused
+/// with [`HistoryError::NoOffer`] rather than trusted on its own say-so.
+///
+/// The sender's trustworthiness is checked before the bundle is even
+/// decrypted, both because it is cheaper and because upstream's own check
+/// drops an untrusted bundle and returns success. See
+/// [`HistoryError::SenderNotTrusted`].
 pub async fn receive_history_bundle(
     scope: &str,
     sender: &str,
-    bundle_json: &str,
+    ciphertext: &[u8],
 ) -> Result<HistoryImport, HistoryError> {
     let room_id = parse_scope(scope)?;
     let user_id = parse_user(sender)?;
-    let bundle: RoomKeyBundle =
-        serde_json::from_str(bundle_json).map_err(|_upstream| HistoryError::MalformedPayload)?;
-    let offered = bundle.room_keys.len() as u32;
+    let downloaded = ciphertext.to_vec();
 
     // Counted through upstream's own progress callback rather than by
     // re-deriving which keys it will accept. Upstream discards keys naming
@@ -327,7 +399,7 @@ pub async fn receive_history_bundle(
     let imported = Arc::new(AtomicU32::new(0));
     let counter = Arc::clone(&imported);
 
-    with_machine(move |machine| {
+    let offered = with_machine(move |machine| {
         Box::pin(async move {
             let store = machine.store();
             let Some(data) = store
@@ -345,12 +417,33 @@ pub async fn receive_history_bundle(
                 return Err(HistoryError::SenderNotTrusted);
             }
 
+            // The key and the expected hash both come from the
+            // announcement rather than from the caller, which is what
+            // makes a swapped or altered download fail here instead of
+            // being imported. `read_to_end` is where the SHA-256 is
+            // checked, so the error it can return is not merely an I/O
+            // one and must not be treated as such.
+            let info: MediaEncryptionInfo = data.bundle_data.file.clone().into();
+            let mut source = Cursor::new(downloaded);
+            let mut decryptor = AttachmentDecryptor::new(&mut source, info)
+                .map_err(|_upstream| HistoryError::BundleUnreadable)?;
+            let mut plaintext = Vec::new();
+            decryptor
+                .read_to_end(&mut plaintext)
+                .map_err(|_upstream| HistoryError::BundleUnreadable)?;
+
+            let bundle: RoomKeyBundle = serde_json::from_slice(&plaintext)
+                .map_err(|_upstream| HistoryError::BundleUnreadable)?;
+            let offered = bundle.room_keys.len() as u32;
+
             store
                 .receive_room_key_bundle(&data, bundle, |_current, _total| {
                     counter.fetch_add(1, Ordering::Relaxed);
                 })
                 .await
-                .map_err(|_upstream| HistoryError::Failed)
+                .map_err(|_upstream| HistoryError::Failed)?;
+
+            Ok(offered)
         })
     })
     .await??;
@@ -375,15 +468,16 @@ mod tests {
     const BAD_USER: &str = "not-a-valid-user";
     const GOOD_SCOPE: &str = "!scope:example.org";
     const GOOD_USER: &str = "@entrant:example.org";
+    const GOOD_URL: &str = "mxc://example.org/abcdef";
 
     #[test]
     fn an_unparseable_scope_is_an_identifier_fault_in_every_call() {
         for error in [
             futures::executor::block_on(build_history_bundle(BAD_SCOPE)).unwrap_err(),
-            futures::executor::block_on(share_history_bundle(BAD_SCOPE, GOOD_USER, "{}"))
+            futures::executor::block_on(share_history_bundle(BAD_SCOPE, GOOD_USER, GOOD_URL, "{}"))
                 .unwrap_err(),
             futures::executor::block_on(offered_history_bundle(BAD_SCOPE, GOOD_USER)).unwrap_err(),
-            futures::executor::block_on(receive_history_bundle(BAD_SCOPE, GOOD_USER, "{}"))
+            futures::executor::block_on(receive_history_bundle(BAD_SCOPE, GOOD_USER, b""))
                 .unwrap_err(),
         ] {
             assert_eq!(error, HistoryError::MalformedIdentifier);
@@ -393,66 +487,121 @@ mod tests {
     #[test]
     fn an_unparseable_user_is_an_identifier_fault_too() {
         for error in [
-            futures::executor::block_on(share_history_bundle(GOOD_SCOPE, BAD_USER, "{}"))
+            futures::executor::block_on(share_history_bundle(GOOD_SCOPE, BAD_USER, GOOD_URL, "{}"))
                 .unwrap_err(),
             futures::executor::block_on(offered_history_bundle(GOOD_SCOPE, BAD_USER)).unwrap_err(),
-            futures::executor::block_on(receive_history_bundle(GOOD_SCOPE, BAD_USER, "{}"))
+            futures::executor::block_on(receive_history_bundle(GOOD_SCOPE, BAD_USER, b""))
                 .unwrap_err(),
         ] {
             assert_eq!(error, HistoryError::MalformedIdentifier);
         }
     }
 
-    /// The distinction `SessionError::MalformedIdentifier` was split out to
-    /// make, kept here: a caller whose file description is malformed is not
-    /// sent to inspect a scope that was fine.
+    /// The upload location is an identifier too, and a product that passes
+    /// the upload's whole response body rather than the URI out of it is the
+    /// likely way to get here.
     #[test]
-    fn a_file_description_that_is_not_one_is_a_payload_fault() {
-        let error =
-            futures::executor::block_on(share_history_bundle(GOOD_SCOPE, GOOD_USER, "not json"))
-                .unwrap_err();
-        assert_eq!(error, HistoryError::MalformedPayload);
-    }
-
-    #[test]
-    fn a_bundle_that_is_not_one_is_a_payload_fault() {
-        let error =
-            futures::executor::block_on(receive_history_bundle(GOOD_SCOPE, GOOD_USER, "not json"))
-                .unwrap_err();
-        assert_eq!(error, HistoryError::MalformedPayload);
-    }
-
-    /// A well-formed JSON document of the wrong shape is still a payload
-    /// fault rather than something exotic. This is the likelier mistake of
-    /// the two: a product that hands `receive_history_bundle` the *offer*
-    /// it downloaded rather than the plaintext inside it passes valid JSON.
-    #[test]
-    fn json_of_the_wrong_shape_is_refused_as_a_payload() {
+    fn an_upload_location_that_is_not_an_mxc_uri_is_an_identifier_fault() {
         let error = futures::executor::block_on(share_history_bundle(
             GOOD_SCOPE,
             GOOD_USER,
-            r#"{"not":"an encrypted file"}"#,
+            "https://example.org/not-mxc",
+            "{}",
         ))
         .unwrap_err();
-        assert_eq!(error, HistoryError::MalformedPayload);
+        assert_eq!(error, HistoryError::MalformedIdentifier);
+    }
+
+    /// The distinction `SessionError::MalformedIdentifier` was split out to
+    /// make, kept here: a caller whose secret is malformed is not sent to
+    /// inspect a scope that was fine.
+    #[test]
+    fn a_secret_this_library_did_not_produce_is_a_payload_fault() {
+        for secret in [
+            "not json",
+            r#"{"not":"an encryption info"}"#,
+            r#"["array"]"#,
+        ] {
+            let error = futures::executor::block_on(share_history_bundle(
+                GOOD_SCOPE, GOOD_USER, GOOD_URL, secret,
+            ))
+            .unwrap_err();
+            assert_eq!(
+                error,
+                HistoryError::MalformedPayload,
+                "secret {secret:?} should be a payload fault"
+            );
+        }
+    }
+
+    /// The whole point of encrypting inside this crate: what a product
+    /// uploads is ciphertext, and the bundle is not recoverable from it
+    /// without the secret. Round-tripped rather than asserted structurally,
+    /// so this fails if the two halves ever stop agreeing.
+    #[test]
+    fn what_is_built_is_ciphertext_and_it_round_trips() {
+        let plaintext = br#"{"room_keys":[],"withheld":[]}"#.to_vec();
+        let mut source = Cursor::new(plaintext.clone());
+        let mut encryptor = AttachmentEncryptor::new(&mut source);
+        let mut ciphertext = Vec::new();
+        encryptor.read_to_end(&mut ciphertext).unwrap();
+        let secret = serde_json::to_string(&encryptor.finish()).unwrap();
+
+        assert_ne!(
+            ciphertext, plaintext,
+            "the uploaded bytes must not be the bundle"
+        );
+
+        let info: MediaEncryptionInfo = serde_json::from_str(&secret).unwrap();
+        let mut encrypted = Cursor::new(ciphertext);
+        let mut decryptor = AttachmentDecryptor::new(&mut encrypted, info).unwrap();
+        let mut recovered = Vec::new();
+        decryptor.read_to_end(&mut recovered).unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    /// A download altered in the repository must not import. The hash the
+    /// announcement carries is what catches it, and it is checked at the
+    /// end of the read rather than at the start, which is exactly why the
+    /// error `read_to_end` returns cannot be treated as an ordinary I/O
+    /// failure.
+    #[test]
+    fn a_tampered_download_does_not_decrypt() {
+        let mut source = Cursor::new(br#"{"room_keys":[],"withheld":[]}"#.to_vec());
+        let mut encryptor = AttachmentEncryptor::new(&mut source);
+        let mut ciphertext = Vec::new();
+        encryptor.read_to_end(&mut ciphertext).unwrap();
+        let info: MediaEncryptionInfo =
+            serde_json::from_str(&serde_json::to_string(&encryptor.finish()).unwrap()).unwrap();
+
+        ciphertext[0] ^= 0xff;
+
+        let mut altered = Cursor::new(ciphertext);
+        let mut decryptor = AttachmentDecryptor::new(&mut altered, info).unwrap();
+        let mut recovered = Vec::new();
+        assert!(
+            decryptor.read_to_end(&mut recovered).is_err(),
+            "a flipped byte must fail the hash rather than decrypt to something"
+        );
     }
 
     /// This crate's "no secret in any error" rule, applied to the one
-    /// surface whose payload is key material in clear.
+    /// surface whose payload is key material.
     #[test]
-    fn an_error_never_echoes_the_bundle_that_caused_it() {
-        let secret_like_bundle = "super-secret-session-key-marker";
-        let rendered = futures::executor::block_on(receive_history_bundle(
+    fn an_error_never_echoes_the_secret_that_caused_it() {
+        let secret_like = "super-secret-attachment-key-marker";
+        let rendered = futures::executor::block_on(share_history_bundle(
             GOOD_SCOPE,
             GOOD_USER,
-            secret_like_bundle,
+            GOOD_URL,
+            secret_like,
         ))
         .unwrap_err()
         .to_string();
 
         assert!(
-            !rendered.contains(secret_like_bundle),
-            "rendered error must not contain the bundle: {rendered}"
+            !rendered.contains(secret_like),
+            "rendered error must not contain the secret: {rendered}"
         );
     }
 

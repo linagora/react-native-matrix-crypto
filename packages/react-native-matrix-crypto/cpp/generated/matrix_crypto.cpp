@@ -259,7 +259,7 @@ extern "C" {
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_receive_history_bundle(
         RustBuffer scope, 
         RustBuffer sender, 
-        RustBuffer bundle_json
+        RustBuffer ciphertext
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_receive_sync_changes(
         RustBuffer raw_json
@@ -281,7 +281,8 @@ extern "C" {
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(
         RustBuffer scope, 
         RustBuffer user, 
-        RustBuffer file_json
+        RustBuffer url, 
+        RustBuffer secret
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_share_scope_key(
         RustBuffer scope, 
@@ -3185,7 +3186,7 @@ NativeMatrixCrypto::NativeMatrixCrypto(
     props["ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle"),
-        3,
+        4,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(rt, thisVal, args, count);
         }
@@ -4435,7 +4436,7 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_set_crypto_o
         return jsi::Value::undefined();
 }
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
-        auto value = uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2])
+        auto value = uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[3])
         );
 
         
