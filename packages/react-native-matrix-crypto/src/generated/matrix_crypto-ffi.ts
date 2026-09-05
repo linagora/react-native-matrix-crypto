@@ -192,6 +192,9 @@ interface NativeModuleInterface {
     verificationId: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_bootstrap_identity(): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_build_history_bundle(
+    scope: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_cancel_verification(
     verificationId: Uint8Array
   ): bigint;
@@ -245,6 +248,10 @@ interface NativeModuleInterface {
     capabilities: Uint8Array,
     uniffi_out_err: UniffiRustCallStatus
   ): void;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_offered_history_bundle(
+    scope: Uint8Array,
+    sender: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_open_crypto_store(
     config: Uint8Array
   ): bigint;
@@ -256,6 +263,11 @@ interface NativeModuleInterface {
     input: Uint8Array,
     payload: Uint8Array,
     observer: bigint
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_history_bundle(
+    scope: Uint8Array,
+    sender: Uint8Array,
+    ciphertext: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_sync_changes(
     rawJson: Uint8Array
@@ -273,6 +285,12 @@ interface NativeModuleInterface {
     observer: bigint,
     uniffi_out_err: UniffiRustCallStatus
   ): void;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(
+    scope: Uint8Array,
+    user: Uint8Array,
+    url: Uint8Array,
+    secret: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_share_scope_key(
     scope: Uint8Array,
     users: Uint8Array
@@ -307,6 +325,7 @@ interface NativeModuleInterface {
   ubrn_ffi_matrix_crypto_ffi_uniffi_contract_version(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_accept_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_bootstrap_identity(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_cancel_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_clear_crypto_observer(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_confirm_scan(): number;
@@ -323,14 +342,17 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_failed(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_sent(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_offer_codes(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_offered_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_open_crypto_store(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_probe(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_probe_with_observer(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_receive_sync_changes(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_recover_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_request_self_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_request_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_set_crypto_observer(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_scope_key(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_start_verification_comparison(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_submit_scanned_code(): number;

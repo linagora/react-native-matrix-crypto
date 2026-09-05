@@ -594,13 +594,13 @@ pub async fn receive_sync_changes(raw_json: &str) -> Result<SyncOutcome, Session
 /// `MalformedIdentifier`, not `MalformedPayload`: what failed is the
 /// caller's scope argument, not the event or response body they also
 /// passed. See [`SessionError::MalformedIdentifier`].
-fn parse_scope(scope: &str) -> Result<OwnedRoomId, SessionError> {
+pub(crate) fn parse_scope(scope: &str) -> Result<OwnedRoomId, SessionError> {
     scope.parse().map_err(|_| SessionError::MalformedIdentifier)
 }
 
 /// Same reasoning as [`parse_scope`]: a user id that does not parse is a
 /// malformed identifier, and the caller supplied it directly.
-fn parse_user(user_id: &str) -> Result<OwnedUserId, SessionError> {
+pub(crate) fn parse_user(user_id: &str) -> Result<OwnedUserId, SessionError> {
     user_id
         .parse()
         .map_err(|_| SessionError::MalformedIdentifier)
@@ -1286,6 +1286,75 @@ pub async fn decrypt_event(
     })
 }
 
+/// Which devices this account's room keys may reach.
+///
+/// Extracted so [`share_scope_key`] and `history.rs` cannot answer it
+/// differently. They must not: a history bundle shared more widely than
+/// the live key would hand the past to devices the present is withheld
+/// from, and the reverse would offer history nobody can use. One
+/// function, one answer, whichever call is asking.
+///
+/// The outbound half of the trust decision `decrypt_event`
+/// hands the caller: who gets this scope's key. This said
+/// "verification lands in M3; revisit this with it", then that
+/// the strategy could not move before cross-signing (M4), then
+/// that M4 had landed and left a *condition* to rule on rather
+/// than an absence. The condition is ruled on now, here rather
+/// than by a parameter, and the rule is the one that condition
+/// dictates:
+///
+/// `EncryptionSettings::default()` carries
+/// `CollectStrategy::AllDevices`, which upstream marks "not
+/// recommended, per the guidance of MSC4153" because it shares
+/// with every unblacklisted device rather than only devices
+/// signed by their owner. The recommended strategy is
+/// identity-based, and it refuses outright when *this* machine
+/// has no verified cross-signing identity of its own
+/// (`SessionRecipientCollectionError::CrossSigningNotSetup`, or
+/// `SendingFromUnverifiedDevice`, before it looks at a single
+/// recipient -- `session_manager/group_sessions/
+/// share_strategy.rs`). So the strategy can only be a
+/// *consequence* of the machine's state, and the consequence
+/// takes both halves: a machine that holds a verified identity
+/// of its own shares identity-based, which is what MSC4153
+/// recommends for it; a machine that never bootstrapped still
+/// has none, keeps `AllDevices`, and keeps working exactly as
+/// it did.
+///
+/// The check is the same one upstream's own strategy performs
+/// before deciding anything, read through the public
+/// `get_identity` rather than through the store, so the two
+/// cannot drift into disagreeing about what "has an identity"
+/// means. `None` as the timeout: waiting on a pending query
+/// here would depend on the caller draining the pump from
+/// another task while this call holds the machine lock, which
+/// it cannot do -- the same discipline `device_statuses`
+/// documents.
+///
+/// A store failure falls back to `AllDevices` rather than
+/// propagating, and that is not a silent demotion:
+/// `get_missing_sessions` above and `share_room_key` below run
+/// against the same store and report its failure on their own
+/// terms, so a broken store surfaces through them; the
+/// strategy choice is not the place it does.
+pub(crate) async fn collect_strategy(machine: &OlmMachine) -> CollectStrategy {
+    match machine.get_identity(machine.user_id(), None).await {
+        Ok(Some(UserIdentity::Own(identity))) if identity.is_verified() => {
+            CollectStrategy::IdentityBasedStrategy
+        }
+        // Every other state falls back to `AllDevices`: no own
+        // identity at all (never bootstrapped), an own identity
+        // this machine cannot vouch for, or a store answer shaped
+        // as someone else's identity. `IdentityBasedStrategy`
+        // would refuse the first two outright, and the third
+        // cannot occur for this machine's own user id, so the
+        // fallback is exactly the set of states where the
+        // identity-based strategy would fail before looking at a
+        // recipient.
+        _ => CollectStrategy::AllDevices,
+    }
+}
+
 /// Ensures `scope` has a group session and shares it with the given users'
 /// known devices, and makes those users' device lists tracked so they can
 /// become known in the first place.
@@ -1362,64 +1431,9 @@ pub async fn share_scope_key(scope: &str, users: &[String]) -> Result<(), Sessio
                 .get_missing_sessions(user_ids.iter().map(AsRef::as_ref))
                 .await;
 
-            // The outbound half of the trust decision `decrypt_event`
-            // hands the caller: who gets this scope's key. This said
-            // "verification lands in M3; revisit this with it", then that
-            // the strategy could not move before cross-signing (M4), then
-            // that M4 had landed and left a *condition* to rule on rather
-            // than an absence. The condition is ruled on now, here rather
-            // than by a parameter, and the rule is the one that condition
-            // dictates:
-            //
-            // `EncryptionSettings::default()` carries
-            // `CollectStrategy::AllDevices`, which upstream marks "not
-            // recommended, per the guidance of MSC4153" because it shares
-            // with every unblacklisted device rather than only devices
-            // signed by their owner. The recommended strategy is
-            // identity-based, and it refuses outright when *this* machine
-            // has no verified cross-signing identity of its own
-            // (`SessionRecipientCollectionError::CrossSigningNotSetup`, or
-            // `SendingFromUnverifiedDevice`, before it looks at a single
-            // recipient -- `session_manager/group_sessions/
-            // share_strategy.rs`). So the strategy can only be a
-            // *consequence* of the machine's state, and the consequence
-            // takes both halves: a machine that holds a verified identity
-            // of its own shares identity-based, which is what MSC4153
-            // recommends for it; a machine that never bootstrapped still
-            // has none, keeps `AllDevices`, and keeps working exactly as
-            // it did.
-            //
-            // The check is the same one upstream's own strategy performs
-            // before deciding anything, read through the public
-            // `get_identity` rather than through the store, so the two
-            // cannot drift into disagreeing about what "has an identity"
-            // means. `None` as the timeout: waiting on a pending query
-            // here would depend on the caller draining the pump from
-            // another task while this call holds the machine lock, which
-            // it cannot do -- the same discipline `device_statuses`
-            // documents.
-            //
-            // A store failure falls back to `AllDevices` rather than
-            // propagating, and that is not a silent demotion:
-            // `get_missing_sessions` above and `share_room_key` below run
-            // against the same store and report its failure on their own
-            // terms, so a broken store surfaces through them; the
-            // strategy choice is not the place it does.
-            let sharing_strategy = match machine.get_identity(machine.user_id(), None).await {
-                Ok(Some(UserIdentity::Own(identity))) if identity.is_verified() => {
-                    CollectStrategy::IdentityBasedStrategy
-                }
-                // Every other state falls back to `AllDevices`: no own
-                // identity at all (never bootstrapped), an own identity
-                // this machine cannot vouch for, or a store answer shaped
-                // as someone else's identity. `IdentityBasedStrategy`
-                // would refuse the first two outright, and the third
-                // cannot occur for this machine's own user id, so the
-                // fallback is exactly the set of states where the
-                // identity-based strategy would fail before looking at a
-                // recipient.
-                _ => CollectStrategy::AllDevices,
-            };
+            // Shared with `history.rs` so the two cannot drift into
+            // disagreeing about who this account's keys may reach.
+            let sharing_strategy = collect_strategy(machine).await;
             let shared = machine
                 .share_room_key(
                     &room_id,
@@ -2145,6 +2159,34 @@ pub(crate) fn queue_action_request(request: UpstreamOutgoingRequest) {
     }
     let sequence = state.next_sequence();
     state.queued_action.push((sequence, request));
+}
+
+/// Queues to-device requests produced somewhere other than
+/// [`share_scope_key`], so they leave through the same pump.
+///
+/// [`share_scope_key`] does this inline rather than through this helper,
+/// and deliberately: it writes `pending_claim` and `queued_to_device` under
+/// one `STATE.lock()` acquisition because [`RequestState`]'s own doc
+/// comment says a caller must never observe one of those updated without
+/// the other. This helper takes its own lock, which is correct only for a
+/// caller with no companion write to keep atomic -- `history.rs` is one,
+/// and a future caller that is not must queue inline the way
+/// [`share_scope_key`] does rather than reach for this.
+///
+/// Keyed by `txn_id` for the same reason the inline version is: upstream
+/// re-hands the same to-device requests until they are marked sent, so a
+/// second call before the first is acknowledged would otherwise queue an
+/// identical message twice and leave the second `mark_request_sent`
+/// failing with `UnknownRequest`.
+pub(crate) fn queue_to_device_requests(
+    requests: impl IntoIterator<Item = std::sync::Arc<ToDeviceRequest>>,
+) {
+    let mut state = STATE.lock().expect("request registry poisoned");
+    for request in requests {
+        state
+            .queued_to_device
+            .insert(request.txn_id.to_string(), request);
+    }
 }
 
 /// Queues this account's signing-identity publication, the one request

@@ -160,6 +160,64 @@ export async function bootstrapIdentity(asyncOpts_?: {
 }
 
 /**
+ * Assembles `scope`'s room keys into a bundle for one recipient, and
+ * encrypts it. Mirrors `build_history_bundle`; see its own doc comment in
+ * `matrix-crypto-core::history`, and that module's own, for why sharing
+ * history is a two-call sequence with the product's upload in between,
+ * why the encryption happens here rather than in the product, and why the
+ * counts come back before anything leaves the device.
+ */
+export async function buildHistoryBundle(
+  scope: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<HistoryBundle> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_build_history_bundle(
+          FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeHistoryBundle.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeHistoryFfiError.lift.bind(
+        FfiConverterTypeHistoryFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Refuses the verification, or abandons it. Mirrors `cancel_flow`.
  */
 export async function cancelVerification(
@@ -967,6 +1025,62 @@ export function offerCodes(capabilities: CodeCapabilities): void {
 }
 
 /**
+ * Reports where a bundle `sender` has offered for `scope` can be fetched
+ * from, if one has been offered. Mirrors `offered_history_bundle`.
+ */
+export async function offeredHistoryBundle(
+  scope: string,
+  sender: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<HistoryOffer | undefined> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_offered_history_bundle(
+          FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(sender, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterOptionalTypeHistoryOffer.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeHistoryFfiError.lift.bind(
+        FfiConverterTypeHistoryFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Reopens a store written by an earlier process. Mirrors `open_store`,
  * which is the same operation as `create_machine` under a name that says
  * what the caller means; see that function's own doc comment in
@@ -1121,6 +1235,69 @@ export async function probeWithObserver(
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeProbeFfiError.lift.bind(
         FfiConverterTypeProbeFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Decrypts and imports a downloaded bundle. Mirrors
+ * `receive_history_bundle`; see its own doc comment for why the key is not
+ * a parameter, and for why the sender's trust is checked here rather than
+ * left to upstream, which drops an untrusted bundle and returns success.
+ */
+export async function receiveHistoryBundle(
+  scope: string,
+  sender: string,
+  ciphertext: ArrayBuffer,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<HistoryImport> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_receive_history_bundle(
+          FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(sender, nativeModule().rustbuffer_alloc),
+          FfiConverterArrayBuffer.lower(
+            ciphertext,
+            nativeModule().rustbuffer_alloc
+          )
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeHistoryImport.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeHistoryFfiError.lift.bind(
+        FfiConverterTypeHistoryFfiError
       )
     );
   } catch (__error: any) {
@@ -1382,6 +1559,54 @@ export function setCryptoObserver(observer: CryptoObserver): void {
     },
     /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString)
   );
+}
+
+/**
+ * Announces an uploaded bundle's location, and the secret that opens it,
+ * to `user`'s devices. Mirrors `share_history_bundle`; see its own doc
+ * comment for why this must not be called before the upload has
+ * succeeded.
+ */
+export async function shareHistoryBundle(
+  scope: string,
+  user: string,
+  url: string,
+  secret: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<void> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_share_history_bundle(
+          FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(user, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(url, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(secret, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_void,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_void,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_void,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_void,
+      /*liftFunc:*/ (_v) => {},
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeHistoryFfiError.lift.bind(
+        FfiConverterTypeHistoryFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
 }
 
 /**
@@ -2292,6 +2517,156 @@ const FfiConverterTypeEnvelope = (() => {
 })();
 
 /**
+ * The wire mirror of `matrix_crypto_core::HistoryBundle`.
+ *
+ * **No `Debug` derive**, for the reason `AccountDataEntry` above gives and
+ * the core type repeats: `secret` is the key to every room key this account
+ * holds for the scope.
+ */
+export type HistoryBundle = {
+  ciphertext: ArrayBuffer;
+  secret: string;
+  shared: number;
+  withheld: number;
+};
+
+/**
+ * Generated factory for {@link HistoryBundle} record objects.
+ */
+export const HistoryBundle = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<HistoryBundle, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<HistoryBundle>,
+  });
+})();
+
+const FfiConverterTypeHistoryBundle = (() => {
+  type TypeName = HistoryBundle;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        ciphertext: FfiConverterArrayBuffer.readFromCursor(c),
+        secret: FfiConverterString.readFromCursor(c),
+        shared: FfiConverterUInt32.readFromCursor(c),
+        withheld: FfiConverterUInt32.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterArrayBuffer.writeIntoCursor(value.ciphertext, c);
+      FfiConverterString.writeIntoCursor(value.secret, c);
+      FfiConverterUInt32.writeIntoCursor(value.shared, c);
+      FfiConverterUInt32.writeIntoCursor(value.withheld, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterArrayBuffer.allocationSize(value.ciphertext) +
+        FfiConverterString.allocationSize(value.secret) +
+        FfiConverterUInt32.allocationSize(value.shared) +
+        FfiConverterUInt32.allocationSize(value.withheld)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::HistoryImport`.
+ */
+export type HistoryImport = {
+  offered: number;
+  imported: number;
+};
+
+/**
+ * Generated factory for {@link HistoryImport} record objects.
+ */
+export const HistoryImport = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<HistoryImport, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<HistoryImport>,
+  });
+})();
+
+const FfiConverterTypeHistoryImport = (() => {
+  type TypeName = HistoryImport;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        offered: FfiConverterUInt32.readFromCursor(c),
+        imported: FfiConverterUInt32.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterUInt32.writeIntoCursor(value.offered, c);
+      FfiConverterUInt32.writeIntoCursor(value.imported, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt32.allocationSize(value.offered) +
+        FfiConverterUInt32.allocationSize(value.imported)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::HistoryOffer`.
+ */
+export type HistoryOffer = {
+  url: string;
+};
+
+/**
+ * Generated factory for {@link HistoryOffer} record objects.
+ */
+export const HistoryOffer = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<HistoryOffer, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<HistoryOffer>,
+  });
+})();
+
+const FfiConverterTypeHistoryOffer = (() => {
+  type TypeName = HistoryOffer;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        url: FfiConverterString.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterString.writeIntoCursor(value.url, c);
+    }
+    allocationSize(value: TypeName): number {
+      return FfiConverterString.allocationSize(value.url);
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
  * Mirror of the core's identity keys, carrying the UniFFI record derive.
  */
 export type IdentityKeys = {
@@ -3116,6 +3491,354 @@ const FfiConverterTypeCryptoSignal = (() => {
           let size = 4;
           size += FfiConverterString.allocationSize(inner.verificationId);
           return size;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: HistoryFfiError
+export enum HistoryFfiError_Tags {
+  MalformedIdentifier = "MalformedIdentifier",
+  MalformedPayload = "MalformedPayload",
+  NotInitialised = "NotInitialised",
+  Failed = "Failed",
+  NoOffer = "NoOffer",
+  SenderNotTrusted = "SenderNotTrusted",
+  BundleUnreadable = "BundleUnreadable",
+}
+/**
+ * The wire mirror of `matrix_crypto_core::HistoryError`.
+ *
+ * **Appended as a new enum rather than folded into `SessionFfiError`, and
+ * that is the point.** Variants of an existing FFI enum carry ordinals the
+ * generated bindings reproduce as `case N`, so adding to one renumbers
+ * nothing but constrains where new kinds may go for ever after -- the
+ * constraint `SessionFfiError`'s own doc comment is written about. A
+ * separate enum for a separate surface has no such history, and the two
+ * kinds this one has that no session error has (`NoOffer`,
+ * `SenderNotTrusted`) belong to history sharing alone.
+ */
+export const HistoryFfiError = (() => {
+  type MalformedIdentifier__interface = {
+    tag: HistoryFfiError_Tags.MalformedIdentifier;
+  };
+  class MalformedIdentifier_
+    extends UniffiError
+    implements MalformedIdentifier__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.MalformedIdentifier;
+    constructor() {
+      super("HistoryFfiError", "MalformedIdentifier");
+    }
+
+    static new(): MalformedIdentifier_ {
+      return new MalformedIdentifier_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedIdentifier_ {
+      return obj.tag === HistoryFfiError_Tags.MalformedIdentifier;
+    }
+    static hasInner(obj: any): obj is MalformedIdentifier_ {
+      return false;
+    }
+  }
+
+  type MalformedPayload__interface = {
+    tag: HistoryFfiError_Tags.MalformedPayload;
+  };
+  class MalformedPayload_
+    extends UniffiError
+    implements MalformedPayload__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.MalformedPayload;
+    constructor() {
+      super("HistoryFfiError", "MalformedPayload");
+    }
+
+    static new(): MalformedPayload_ {
+      return new MalformedPayload_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedPayload_ {
+      return obj.tag === HistoryFfiError_Tags.MalformedPayload;
+    }
+    static hasInner(obj: any): obj is MalformedPayload_ {
+      return false;
+    }
+  }
+
+  type NotInitialised__interface = {
+    tag: HistoryFfiError_Tags.NotInitialised;
+  };
+  class NotInitialised_
+    extends UniffiError
+    implements NotInitialised__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.NotInitialised;
+    constructor() {
+      super("HistoryFfiError", "NotInitialised");
+    }
+
+    static new(): NotInitialised_ {
+      return new NotInitialised_();
+    }
+
+    static instanceOf(obj: any): obj is NotInitialised_ {
+      return obj.tag === HistoryFfiError_Tags.NotInitialised;
+    }
+    static hasInner(obj: any): obj is NotInitialised_ {
+      return false;
+    }
+  }
+
+  type Failed__interface = {
+    tag: HistoryFfiError_Tags.Failed;
+  };
+  class Failed_ extends UniffiError implements Failed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.Failed;
+    constructor() {
+      super("HistoryFfiError", "Failed");
+    }
+
+    static new(): Failed_ {
+      return new Failed_();
+    }
+
+    static instanceOf(obj: any): obj is Failed_ {
+      return obj.tag === HistoryFfiError_Tags.Failed;
+    }
+    static hasInner(obj: any): obj is Failed_ {
+      return false;
+    }
+  }
+
+  type NoOffer__interface = {
+    tag: HistoryFfiError_Tags.NoOffer;
+  };
+  class NoOffer_ extends UniffiError implements NoOffer__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.NoOffer;
+    constructor() {
+      super("HistoryFfiError", "NoOffer");
+    }
+
+    static new(): NoOffer_ {
+      return new NoOffer_();
+    }
+
+    static instanceOf(obj: any): obj is NoOffer_ {
+      return obj.tag === HistoryFfiError_Tags.NoOffer;
+    }
+    static hasInner(obj: any): obj is NoOffer_ {
+      return false;
+    }
+  }
+
+  type SenderNotTrusted__interface = {
+    tag: HistoryFfiError_Tags.SenderNotTrusted;
+  };
+  class SenderNotTrusted_
+    extends UniffiError
+    implements SenderNotTrusted__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.SenderNotTrusted;
+    constructor() {
+      super("HistoryFfiError", "SenderNotTrusted");
+    }
+
+    static new(): SenderNotTrusted_ {
+      return new SenderNotTrusted_();
+    }
+
+    static instanceOf(obj: any): obj is SenderNotTrusted_ {
+      return obj.tag === HistoryFfiError_Tags.SenderNotTrusted;
+    }
+    static hasInner(obj: any): obj is SenderNotTrusted_ {
+      return false;
+    }
+  }
+
+  type BundleUnreadable__interface = {
+    tag: HistoryFfiError_Tags.BundleUnreadable;
+  };
+  class BundleUnreadable_
+    extends UniffiError
+    implements BundleUnreadable__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "HistoryFfiError";
+    readonly tag = HistoryFfiError_Tags.BundleUnreadable;
+    constructor() {
+      super("HistoryFfiError", "BundleUnreadable");
+    }
+
+    static new(): BundleUnreadable_ {
+      return new BundleUnreadable_();
+    }
+
+    static instanceOf(obj: any): obj is BundleUnreadable_ {
+      return obj.tag === HistoryFfiError_Tags.BundleUnreadable;
+    }
+    static hasInner(obj: any): obj is BundleUnreadable_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is HistoryFfiError {
+    return obj[uniffiTypeNameSymbol] === "HistoryFfiError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    MalformedIdentifier: MalformedIdentifier_,
+    MalformedPayload: MalformedPayload_,
+    NotInitialised: NotInitialised_,
+    Failed: Failed_,
+    NoOffer: NoOffer_,
+    SenderNotTrusted: SenderNotTrusted_,
+    BundleUnreadable: BundleUnreadable_,
+  });
+})();
+/**
+ * The wire mirror of `matrix_crypto_core::HistoryError`.
+ *
+ * **Appended as a new enum rather than folded into `SessionFfiError`, and
+ * that is the point.** Variants of an existing FFI enum carry ordinals the
+ * generated bindings reproduce as `case N`, so adding to one renumbers
+ * nothing but constrains where new kinds may go for ever after -- the
+ * constraint `SessionFfiError`'s own doc comment is written about. A
+ * separate enum for a separate surface has no such history, and the two
+ * kinds this one has that no session error has (`NoOffer`,
+ * `SenderNotTrusted`) belong to history sharing alone.
+ */
+export type HistoryFfiError = InstanceType<
+  (typeof HistoryFfiError)[
+    | "MalformedIdentifier"
+    | "MalformedPayload"
+    | "NotInitialised"
+    | "Failed"
+    | "NoOffer"
+    | "SenderNotTrusted"
+    | "BundleUnreadable"]
+>;
+
+// FfiConverter for enum HistoryFfiError
+const FfiConverterTypeHistoryFfiError = (() => {
+  type TypeName = HistoryFfiError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return new HistoryFfiError.MalformedIdentifier();
+        case 2:
+          return new HistoryFfiError.MalformedPayload();
+        case 3:
+          return new HistoryFfiError.NotInitialised();
+        case 4:
+          return new HistoryFfiError.Failed();
+        case 5:
+          return new HistoryFfiError.NoOffer();
+        case 6:
+          return new HistoryFfiError.SenderNotTrusted();
+        case 7:
+          return new HistoryFfiError.BundleUnreadable();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value.tag) {
+        case HistoryFfiError_Tags.MalformedIdentifier: {
+          c.writeI32(1);
+          return;
+        }
+        case HistoryFfiError_Tags.MalformedPayload: {
+          c.writeI32(2);
+          return;
+        }
+        case HistoryFfiError_Tags.NotInitialised: {
+          c.writeI32(3);
+          return;
+        }
+        case HistoryFfiError_Tags.Failed: {
+          c.writeI32(4);
+          return;
+        }
+        case HistoryFfiError_Tags.NoOffer: {
+          c.writeI32(5);
+          return;
+        }
+        case HistoryFfiError_Tags.SenderNotTrusted: {
+          c.writeI32(6);
+          return;
+        }
+        case HistoryFfiError_Tags.BundleUnreadable: {
+          c.writeI32(7);
+          return;
+        }
+        default:
+          // Throwing from here means that HistoryFfiError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case HistoryFfiError_Tags.MalformedIdentifier: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.MalformedPayload: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.NotInitialised: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.Failed: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.NoOffer: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.SenderNotTrusted: {
+          return 4;
+        }
+        case HistoryFfiError_Tags.BundleUnreadable: {
+          return 4;
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -5394,6 +6117,11 @@ const FfiConverterSequenceTypeDeviceStatus = new FfiConverterArray(
   FfiConverterTypeDeviceStatus
 );
 
+// FfiConverter for HistoryOffer | undefined
+const FfiConverterOptionalTypeHistoryOffer = new FfiConverterOptional(
+  FfiConverterTypeHistoryOffer
+);
+
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
@@ -5438,6 +6166,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_bootstrap_identity"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle() !==
+    52497
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle"
     );
   }
   if (
@@ -5569,6 +6305,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_offered_history_bundle() !==
+    44015
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_offered_history_bundle"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_open_crypto_store() !==
     38682
   ) {
@@ -5589,6 +6333,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_probe_with_observer"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle() !==
+    65110
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle"
     );
   }
   if (
@@ -5629,6 +6381,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_set_crypto_observer"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle() !==
+    51312
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle"
     );
   }
   if (
@@ -5718,6 +6478,10 @@ export default Object.freeze({
     FfiConverterTypeCryptoSignal,
     FfiConverterTypeDeviceStatus,
     FfiConverterTypeEnvelope,
+    FfiConverterTypeHistoryBundle,
+    FfiConverterTypeHistoryFfiError,
+    FfiConverterTypeHistoryImport,
+    FfiConverterTypeHistoryOffer,
     FfiConverterTypeIdentityKeys,
     FfiConverterTypeIdentityStatus,
     FfiConverterTypeMachineFfiError,
