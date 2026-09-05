@@ -63,6 +63,7 @@ export {
   createCryptoMachine,
   createRecovery,
   decryptEvent,
+  discardScopeKey,
   encryptEvent,
   encryptionSlice,
   exportSecrets,

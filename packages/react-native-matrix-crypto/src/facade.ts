@@ -23,6 +23,7 @@ import {
   createCryptoMachine as nativeCreateCryptoMachine,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
+  discardScopeKey as nativeDiscardScopeKey,
   deviceIdentityKeys as nativeDeviceIdentityKeys,
   deviceStatuses as nativeDeviceStatuses,
   encryptEvent as nativeEncryptEvent,
@@ -632,6 +633,45 @@ export async function shareScopeKey(
 ): Promise<void> {
   try {
     await nativeShareScopeKey(scope, userIds)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Forces this scope's key to be replaced, so that nothing sent from here on
+ * can be read with the key already handed out.
+ *
+ * **This is what makes removing somebody from a conversation mean anything.**
+ * Removing them removes their right to write. It does not take back the key
+ * they already hold, and these keys do not expire: without this call they go
+ * on reading everything sent afterwards, from a conversation they are no
+ * longer in, and nothing anywhere reports it.
+ *
+ * **Remove them first, rotate second.** No new key is made here. The
+ * replacement is created at the next {@link shareScopeKey}, and that call
+ * shares it with the users *it* names -- so rotating first and sharing before
+ * the removal has landed hands the fresh key to the very person it was
+ * rotated away from.
+ *
+ * **It rotates only this device's key.** Everyone else in the conversation
+ * encrypts with their own, and a departed party keeps reading theirs until
+ * each of them rotates too. For two people that is the whole of it; for a
+ * group it is one participant's share.
+ *
+ * **It takes nothing back.** Everything they already received, they keep.
+ * This bounds the future and cannot touch the past, and no call anywhere can.
+ * A product offering this gesture owes its user that sentence.
+ *
+ * @returns `true` when a key existed and was replaced; `false` when there was
+ * none -- this device has not encrypted in that scope, so no key out there
+ * came from here. **`false` is not a failure.** It is reported because "the
+ * key was rotated" and "there was no key of ours to rotate" are different
+ * facts, and a caller asserting the first should not pass on the second.
+ */
+export async function discardScopeKey(scope: CryptoScopeId): Promise<boolean> {
+  try {
+    return await nativeDiscardScopeKey(scope)
   } catch (e) {
     throw toCryptoError(e)
   }

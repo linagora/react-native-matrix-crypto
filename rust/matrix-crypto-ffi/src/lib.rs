@@ -1184,6 +1184,18 @@ pub async fn share_scope_key(scope: String, users: Vec<String>) -> Result<(), Se
         .map_err(Into::into)
 }
 
+/// Forces this scope's outbound group session to be replaced. Mirrors
+/// `discard_scope_key`; see its own doc comment in
+/// `matrix-crypto-core::session` for why an eviction that does not do this
+/// removes only the right to write, for the ordering that makes it worth
+/// anything, and for why the boolean it returns is not a success flag.
+#[uniffi::export]
+pub async fn discard_scope_key(scope: String) -> Result<bool, SessionFfiError> {
+    matrix_crypto_core::discard_scope_key(&scope)
+        .await
+        .map_err(Into::into)
+}
+
 /// Drains every outstanding outbound request. Mirrors
 /// `take_outgoing_requests`; see its own doc comment in
 /// `matrix-crypto-core::session` and the design doc section 3bis for why

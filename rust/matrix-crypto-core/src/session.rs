@@ -1520,6 +1520,59 @@ pub async fn share_scope_key(scope: &str, users: &[String]) -> Result<(), Sessio
     Ok(())
 }
 
+/// Forces this scope's outbound group session to be replaced, so that
+/// nothing encrypted from here on can be read with the key already handed
+/// out.
+///
+/// # What this is for, and the thing it is easy to believe instead
+///
+/// Removing somebody from a conversation removes their right to *write*. It
+/// does not take back the room key they already hold, and Megolm keys do not
+/// expire: without this call they keep reading everything sent afterwards,
+/// from a conversation they are no longer in, and nothing anywhere reports
+/// it. That is the difference between an eviction and the appearance of one.
+///
+/// # What it does not do, stated because the gap is the dangerous part
+///
+/// **It rotates only *this* device's outbound session.** Every other member
+/// of the conversation encrypts with their own, and a departed party keeps
+/// reading theirs until each of them rotates too. In a conversation of two
+/// that is the whole of it; in a group it is one participant's share of the
+/// work, and a product that presents it as more is misdescribing what it
+/// did.
+///
+/// **It takes nothing back.** Everything the other party already received,
+/// they keep -- messages and keys both. This bounds the future and cannot
+/// touch the past, and no call anywhere can.
+///
+/// # The ordering that makes it worth anything
+///
+/// A new session is not created here. Upstream invalidates the current one
+/// and creates the replacement lazily, at the next [`share_scope_key`],
+/// which shares it with **the users that call names**. So a product must
+/// remove the member first and rotate second: rotating first and then
+/// sharing before the removal has landed hands the fresh key to the very
+/// party it was rotated away from.
+///
+/// # The boolean, which is not a success flag
+///
+/// `true` means a session existed and was invalidated. `false` means there
+/// was none to invalidate -- this device has not encrypted in that scope, so
+/// there is no key out there that came from here, and the next send will
+/// create a fresh session regardless. **`false` is not a failure**, and a
+/// caller that treats it as one would report a problem where there is none.
+/// It is reported rather than swallowed because "the key was rotated" and
+/// "there was no key of ours to rotate" are different facts about the
+/// conversation, and an eviction that asserts the first should not pass on
+/// the second.
+pub async fn discard_scope_key(scope: &str) -> Result<bool, SessionError> {
+    let room_id = parse_scope(scope)?;
+
+    with_machine(move |machine| Box::pin(async move { machine.discard_room_key(&room_id).await }))
+        .await?
+        .map_err(|_upstream| SessionError::Failed)
+}
+
 /// Which upstream response shape a request id crossing back in through
 /// [`mark_request_sent`] must be parsed as.
 ///

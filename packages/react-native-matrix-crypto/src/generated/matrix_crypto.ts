@@ -678,6 +678,54 @@ export async function deviceStatuses(
 }
 
 /**
+ * Forces this scope's outbound group session to be replaced. Mirrors
+ * `discard_scope_key`; see its own doc comment in
+ * `matrix-crypto-core::session` for why an eviction that does not do this
+ * removes only the right to write, for the ordering that makes it worth
+ * anything, and for why the boolean it returns is not a success flag.
+ */
+export async function discardScopeKey(
+  scope: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<boolean> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(
+          FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_i8,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_i8,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_i8,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_i8,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterBool.lift.bind(FfiConverterBool),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeSessionFfiError.lift.bind(
+        FfiConverterTypeSessionFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Encrypts `payload_json` for `scope`. Mirrors `encrypt_event`; see its
  * own doc comment in `matrix-crypto-core::session`.
  */
@@ -5470,6 +5518,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_device_statuses"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key() !==
+    23555
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key"
     );
   }
   if (

@@ -16,6 +16,26 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.5.0
+
+### Added
+
+- **`discardScopeKey`**, which is what makes removing somebody from a
+  conversation mean anything. Removing them removes their right to write and
+  takes back no key, and Megolm keys do not expire, so without a rotation the
+  departed party goes on reading everything sent afterwards and nothing
+  reports it. Remove first and rotate second: no new key is made by this
+  call, the replacement is created at the next `shareScopeKey`, and that call
+  shares it with the users it names — so rotating first and sharing before
+  the removal has landed hands the fresh key to the very person it was
+  rotated away from.
+
+  It rotates only this device's key, and it takes nothing back: everything
+  the other party already received, they keep. The returned boolean says
+  whether a key of this device's existed to rotate at all, and `false` is not
+  a failure — it is reported because "the key was rotated" and "there was no
+  key of ours to rotate" are different facts about a conversation.
+
 ## 0.4.0
 
 The two trust decisions that bound this library's cryptographic behaviour
