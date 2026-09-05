@@ -209,6 +209,10 @@ extern "C" {
         RustBuffer passphrase, 
         RustBuffer account_data
     );
+    /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(
+        RustBuffer ciphertext, 
+        RustBuffer secret
+    );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_decrypt_event(
         RustBuffer scope, 
         RustBuffer raw_json, 
@@ -223,6 +227,9 @@ extern "C" {
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(
         RustBuffer scope
+    );
+    /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(
+        RustBuffer plaintext
     );
     /*handle*/ uint64_t uniffi_matrix_crypto_ffi_fn_func_encrypt_event(
         RustBuffer scope, 
@@ -526,6 +533,8 @@ extern "C" {
     );
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_create_recovery(
     );
+    uint16_t uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(
+    );
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(
     );
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_device_identity_keys(
@@ -533,6 +542,8 @@ extern "C" {
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_device_statuses(
     );
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(
+    );
+    uint16_t uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(
     );
     uint16_t uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(
     );
@@ -3044,6 +3055,14 @@ NativeMatrixCrypto::NativeMatrixCrypto(
             return this->cpp_uniffi_matrix_crypto_ffi_fn_func_create_recovery(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment"),
+        2,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event"),
@@ -3074,6 +3093,14 @@ NativeMatrixCrypto::NativeMatrixCrypto(
         1,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment"),
+        1,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_event"] = jsi::Function::createFromHostFunction(
@@ -3724,6 +3751,14 @@ NativeMatrixCrypto::NativeMatrixCrypto(
             return this->cpp_uniffi_matrix_crypto_ffi_checksum_func_create_recovery(rt, thisVal, args, count);
         }
     );
+    props["ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(rt, thisVal, args, count);
+        }
+    );
     props["ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event"] = jsi::Function::createFromHostFunction(
         rt,
         jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event"),
@@ -3754,6 +3789,14 @@ NativeMatrixCrypto::NativeMatrixCrypto(
         0,
         [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(rt, thisVal, args, count);
+        }
+    );
+    props["ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment"] = jsi::Function::createFromHostFunction(
+        rt,
+        jsi::PropNameID::forAscii(rt, "ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment"),
+        0,
+        [this](jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(rt, thisVal, args, count);
         }
     );
     props["ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event"] = jsi::Function::createFromHostFunction(
@@ -4324,6 +4367,13 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_create_recov
         
         return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1])
+        );
+
+        
+        return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_matrix_crypto_ffi_fn_func_decrypt_event(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[1]), uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[2])
         );
@@ -4347,6 +4397,13 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_device_statu
 }
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0])
+        );
+
+        
+        return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(uniffi::matrix_crypto::Bridging<RustBuffer>::fromJs(rt, callInvoker, args[0])
         );
 
         
@@ -4961,6 +5018,13 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_create
         
         return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
+jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(
         );
@@ -4984,6 +5048,13 @@ jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_device
 }
 jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
         auto value = uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(
+        );
+
+        
+        return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeMatrixCrypto::cpp_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count) {
+        auto value = uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(
         );
 
         

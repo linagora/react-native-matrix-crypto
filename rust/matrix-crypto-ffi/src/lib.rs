@@ -1763,3 +1763,78 @@ pub async fn receive_history_bundle(
         .map(Into::into)
         .map_err(Into::into)
 }
+
+/// The wire mirror of `matrix_crypto_core::AttachmentError`.
+///
+/// A separate enum, for the reason `HistoryFfiError` states above: variants
+/// carry ordinals the generated bindings reproduce as `case N`, so a surface
+/// with its own kinds gets its own enum rather than borrowing one whose
+/// numbering it would then be bound by.
+#[derive(Debug, uniffi::Error, thiserror::Error)]
+pub enum AttachmentFfiError {
+    #[error("the secret is not one this library produced")]
+    MalformedSecret,
+    #[error("the bytes are not the bytes the secret announced")]
+    NotWhatWasAnnounced,
+    #[error("the crypto operation failed")]
+    Failed,
+}
+
+impl From<matrix_crypto_core::AttachmentError> for AttachmentFfiError {
+    fn from(error: matrix_crypto_core::AttachmentError) -> Self {
+        use matrix_crypto_core::AttachmentError as Core;
+        match error {
+            Core::MalformedSecret => AttachmentFfiError::MalformedSecret,
+            Core::NotWhatWasAnnounced => AttachmentFfiError::NotWhatWasAnnounced,
+            Core::Failed => AttachmentFfiError::Failed,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::SealedAttachment`.
+///
+/// **No `Debug` derive**, for the reason `HistoryBundle` above gives and the
+/// core type repeats: `secret` is the key to the file.
+#[derive(uniffi::Record)]
+pub struct SealedAttachment {
+    pub ciphertext: Vec<u8>,
+    pub secret: String,
+}
+
+impl From<matrix_crypto_core::SealedAttachment> for SealedAttachment {
+    fn from(sealed: matrix_crypto_core::SealedAttachment) -> Self {
+        SealedAttachment {
+            ciphertext: sealed.ciphertext,
+            secret: sealed.secret,
+        }
+    }
+}
+
+/// Encrypts an attachment and hands back the ciphertext to upload and the
+/// secret that opens it. Mirrors `encrypt_attachment`; see its own doc
+/// comment in `matrix-crypto-core::attachment`, and that module's own, for
+/// why the encryption happens here rather than in the product and why no
+/// upload happens here at all.
+#[uniffi::export]
+pub async fn encrypt_attachment(
+    plaintext: Vec<u8>,
+) -> Result<SealedAttachment, AttachmentFfiError> {
+    matrix_crypto_core::encrypt_attachment(&plaintext)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+/// Decrypts a downloaded attachment. Mirrors `decrypt_attachment`; see its
+/// own doc comment for why a malformed secret and bytes that are not what was
+/// announced are told apart, and why that distinction is exact rather than a
+/// guess.
+#[uniffi::export]
+pub async fn decrypt_attachment(
+    ciphertext: Vec<u8>,
+    secret: String,
+) -> Result<Vec<u8>, AttachmentFfiError> {
+    matrix_crypto_core::decrypt_attachment(&ciphertext, &secret)
+        .await
+        .map_err(Into::into)
+}

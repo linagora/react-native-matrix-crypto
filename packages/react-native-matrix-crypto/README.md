@@ -20,6 +20,7 @@ It exposes [`matrix-sdk-crypto`](https://github.com/matrix-org/matrix-rust-sdk/t
 - [Creating this account's signing identity](#creating-this-accounts-signing-identity)
 - [Joining an identity from a second device](#joining-an-identity-from-a-second-device)
 - [Verifying a device](#verifying-a-device)
+- [Putting a file in a conversation](#putting-a-file-in-a-conversation)
 - [Limits you must design around](#limits-you-must-design-around)
 - [What works today](#what-works-today)
 - [API reference and stability](#api-reference-and-stability)
@@ -558,6 +559,41 @@ if (offer !== null) {
 
 [MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
 
+## Putting a file in a conversation
+
+A photograph, a recording, a document. Matrix encrypts attachments separately from the events that reference them: the file is encrypted with its own key, uploaded as ordinary bytes, and the key travels inside the event, which your conversation's own encryption already protects.
+
+**You never implement that encryption**, for the same reason you never implement the history bundle's: React Native has no AES and no SHA-256, and a library that handed you a plaintext and a key would be asking you to write Matrix's attachment specification in JavaScript, on the platform least equipped for it.
+
+```ts
+import {
+  encryptAttachment,
+  decryptAttachment,
+} from 'react-native-matrix-crypto'
+
+// Sending. The bytes to upload carry no key.
+const sealed = await encryptAttachment(fileBytes)
+const url = await yourUploader(sealed.ciphertext)
+
+// `sealed.secret` opens the file. Put it in the event that references the
+// attachment -- inside the conversation's encryption -- and nowhere else.
+await sendYourEvent({ url, secret: sealed.secret })
+
+// Receiving.
+const ciphertext = await yourDownloader(url)
+const fileBytes = await decryptAttachment(ciphertext, secret)
+```
+
+**No upload and no download happen here.** The media repository is yours: it has the homeserver's address, the access token and the retry policy, and a crypto library that acquired an HTTP client would have acquired all three.
+
+**A fresh key every call**, including for the same bytes. Encrypting one file twice gives two ciphertexts and two secrets; the discarded one was never uploaded, so nobody can fetch it and nobody holds its key.
+
+**The whole file is held in memory twice**, once as plaintext and once as ciphertext. That is a real limit and it is yours to respect: the boundary these bytes cross has no streams, so a product putting a video through it should know it is doing that.
+
+**The two failures are told apart, and acting on the difference is the point.** `malformed_secret` is a statement about the secret: it is not one this library produced, or it names a version of the attachment specification this build does not know. Retrying the download will not help. `not_what_was_announced` is the SHA-256 in the secret failing against the bytes you downloaded — truncated, corrupted, or substituted — and that download is worth making again.
+
+Neither ever returns partial bytes. The hash is checked at the end of the file, and a failure discards everything read so far rather than handing back a prefix that happened to decrypt.
+
 ## Removing somebody, so that it means something
 
 Removing a person from a conversation removes their right to _write_. It does not take back the key they already hold, and these keys do not expire: without a rotation they go on reading everything sent afterwards, from a conversation they are no longer in, and nothing anywhere reports it.
@@ -593,6 +629,7 @@ await shareScopeKey(scope, await yourRemainingMembers(scope))
 | `encryptEvent`, `decryptEvent`                                                               | working, group sessions backed by `matrix-sdk-crypto`, proven between two crypto machines with the key travelling through the queue rather than handed over in test code                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `receiveSyncChanges`, `shareScopeKey`, `takeOutgoingRequests`, `markRequestSent`             | working, over a typed `SyncDelta` and one shared mapping                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Sharing a scope's history with somebody you invite                                           | working, over [MSC4268] room key bundles: `buildHistoryBundle`, `shareHistoryBundle`, `offeredHistoryBundle`, `receiveHistoryBundle`. The bundle is encrypted and decrypted here, so a product uploads and downloads bytes and never implements attachment encryption; the counts come back before anything leaves the device, because what it hands over cannot be taken back                                                                                                                                                                                                                                                                                                                             |
+| Encrypting a file to put in a conversation                                                   | working: `encryptAttachment`, `decryptAttachment`. The same primitives the history bundle uses, for arbitrary files. You upload and download the bytes; a malformed secret and bytes that are not what the secret announced are refused as two different kinds, because only one of them is worth retrying the download for                                                                                                                                                                                                                                                                                                                                                                                |
 | Rotating a scope's key when somebody is removed                                              | working, `discardScopeKey`. Removing a member removes the right to write and takes back no key, so without this the departed party keeps reading; the boolean says whether a key of this device's existed to rotate at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Interoperability with a third-party Matrix client                                            | proven both directions against `matrix-nio` over a real homeserver, through the Rust core and through the published TypeScript surface on an emulator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Device verification by short string comparison (SAS)                                         | working, in both flow shapes and whichever side opens the comparison, proven against a bare `matrix-sdk-crypto` machine driven directly: an agreement completing, and a genuine disagreement refusing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -657,7 +694,7 @@ How this library was built, what the measurements do and do not establish, and t
 
 ## Roadmap
 
-**The current release is 0.5.0.** It gives a conversation a past and a way out of one: [MSC4268] room key bundles hand somebody you invite what was said before they arrived, encrypted by this library rather than by your product, and `discardScopeKey` rotates a scope's key so that removing a person stops them reading on. That sits on top of the two trust decisions 0.4.0 made the product's, device verification by a scannable code in all three modes the protocol defines, with showing and scanning announced separately, encryption and decryption, short-string verification, cross-signing identities and recovery through server-side secret storage. The npm badge at the top of this file always names the version actually published; this sentence names what the tree it points at contains.
+**The current release is 0.6.0.** It lets a product put a file in a conversation: `encryptAttachment` and `decryptAttachment` expose the attachment encryption the history bundle already used inside itself, so a product uploads and downloads bytes and never writes AES or SHA-256 in JavaScript. 0.5.0 before it gave a conversation a past and a way out of one: [MSC4268] room key bundles hand somebody you invite what was said before they arrived, encrypted by this library rather than by your product, and `discardScopeKey` rotates a scope's key so that removing a person stops them reading on. That sits on top of the two trust decisions 0.4.0 made the product's, device verification by a scannable code in all three modes the protocol defines, with showing and scanning announced separately, encryption and decryption, short-string verification, cross-signing identities and recovery through server-side secret storage. The npm badge at the top of this file always names the version actually published; this sentence names what the tree it points at contains.
 
 **Everything this library set out to do is built.** The table above is the authority on what each capability does and does not promise; the design notes are the history behind it, and you do not need either to use the library.
 
@@ -724,7 +761,7 @@ The `audit` job is `npm audit`, and it is deliberately not a `gate:*` script. Ev
 
 A release is a git tag. Pushing a tag matching `v*` — for example `v0.3.0` — runs `.github/workflows/release.yml`, which calls the entire pull request workflow first, then builds the full cross compile matrix for both platforms, checks that the binaries really landed in the tree it is about to pack from and that npm's own file list names them, packs one tarball, asserts that tarball really contains the prebuilt binaries, installs those same bytes with `cargo` and `rustc` scrubbed out of `PATH` and loads the module out of them, and only then publishes, with provenance and under the correct distribution tag. It publishes the exact tarball it checked rather than repacking. Afterwards `scripts/assert-published-tags.sh` reads the tags back off the registry. Four things stop the run before anything is built, each saying so by name: a tag that disagrees with the version in `packages/react-native-matrix-crypto/package.json`, a distribution tag that disagrees with what that version implies, a version already on the registry, and a missing `NPM_TOKEN`.
 
-`./scripts/rehearse-publish.sh` runs the same tree check, packs exactly as the release workflow packs, runs the same assertion on the packed bytes, and finishes with `npm publish --dry-run --tag <tag>`, uploading nothing. It needs the binaries on disk and names precisely which are missing. `./scripts/assert-release-ready.sh v0.5.0 latest` rehearses the other half against the current version; pass the version you are about to tag. Neither is a `gate:*` script, because `gate:readme` requires every `gate:*` to run as a step in `ci.yml` and these need an artifact with binaries in it, which a pull request never has.
+`./scripts/rehearse-publish.sh` runs the same tree check, packs exactly as the release workflow packs, runs the same assertion on the packed bytes, and finishes with `npm publish --dry-run --tag <tag>`, uploading nothing. It needs the binaries on disk and names precisely which are missing. `./scripts/assert-release-ready.sh v0.6.0 latest` rehearses the other half against the current version; pass the version you are about to tag. Neither is a `gate:*` script, because `gate:readme` requires every `gate:*` to run as a step in `ci.yml` and these need an artifact with binaries in it, which a pull request never has.
 
 ### Conventions
 

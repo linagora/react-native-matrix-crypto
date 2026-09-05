@@ -555,6 +555,67 @@ export async function createRecovery(
 }
 
 /**
+ * Decrypts a downloaded attachment. Mirrors `decrypt_attachment`; see its
+ * own doc comment for why a malformed secret and bytes that are not what was
+ * announced are told apart, and why that distinction is exact rather than a
+ * guess.
+ */
+export async function decryptAttachment(
+  ciphertext: ArrayBuffer,
+  secret: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<ArrayBuffer> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(
+          FfiConverterArrayBuffer.lower(
+            ciphertext,
+            nativeModule().rustbuffer_alloc
+          ),
+          FfiConverterString.lower(secret, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterArrayBuffer.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeAttachmentFfiError.lift.bind(
+        FfiConverterTypeAttachmentFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Decrypts `raw_json`, an event received for `scope`, under the sender
  * trust requirement the caller chooses. Mirrors `decrypt_event`; see its
  * own doc comment in `matrix-crypto-core::session`, and
@@ -773,6 +834,66 @@ export async function discardScopeKey(
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSessionFfiError.lift.bind(
         FfiConverterTypeSessionFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Encrypts an attachment and hands back the ciphertext to upload and the
+ * secret that opens it. Mirrors `encrypt_attachment`; see its own doc
+ * comment in `matrix-crypto-core::attachment`, and that module's own, for
+ * why the encryption happens here rather than in the product and why no
+ * upload happens here at all.
+ */
+export async function encryptAttachment(
+  plaintext: ArrayBuffer,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<SealedAttachment> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(
+          FfiConverterArrayBuffer.lower(
+            plaintext,
+            nativeModule().rustbuffer_alloc
+          )
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeSealedAttachment.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeAttachmentFfiError.lift.bind(
+        FfiConverterTypeAttachmentFfiError
       )
     );
   } catch (__error: any) {
@@ -3218,6 +3339,57 @@ const FfiConverterTypeScannableCode = (() => {
 })();
 
 /**
+ * The wire mirror of `matrix_crypto_core::SealedAttachment`.
+ *
+ * **No `Debug` derive**, for the reason `HistoryBundle` above gives and the
+ * core type repeats: `secret` is the key to the file.
+ */
+export type SealedAttachment = {
+  ciphertext: ArrayBuffer;
+  secret: string;
+};
+
+/**
+ * Generated factory for {@link SealedAttachment} record objects.
+ */
+export const SealedAttachment = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<SealedAttachment, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<SealedAttachment>,
+  });
+})();
+
+const FfiConverterTypeSealedAttachment = (() => {
+  type TypeName = SealedAttachment;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        ciphertext: FfiConverterArrayBuffer.readFromCursor(c),
+        secret: FfiConverterString.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterArrayBuffer.writeIntoCursor(value.ciphertext, c);
+      FfiConverterString.writeIntoCursor(value.secret, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterArrayBuffer.allocationSize(value.ciphertext) +
+        FfiConverterString.allocationSize(value.secret)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
  * Mirror of the core's sync outcome, carrying the UniFFI record derive.
  *
  * Both counts are plain totals with no payload content, key material or
@@ -3264,6 +3436,185 @@ const FfiConverterTypeSyncOutcome = (() => {
         FfiConverterUInt32.allocationSize(value.toDeviceEventCount) +
         FfiConverterUInt32.allocationSize(value.newSessionCount)
       );
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: AttachmentFfiError
+export enum AttachmentFfiError_Tags {
+  MalformedSecret = "MalformedSecret",
+  NotWhatWasAnnounced = "NotWhatWasAnnounced",
+  Failed = "Failed",
+}
+/**
+ * The wire mirror of `matrix_crypto_core::AttachmentError`.
+ *
+ * A separate enum, for the reason `HistoryFfiError` states above: variants
+ * carry ordinals the generated bindings reproduce as `case N`, so a surface
+ * with its own kinds gets its own enum rather than borrowing one whose
+ * numbering it would then be bound by.
+ */
+export const AttachmentFfiError = (() => {
+  type MalformedSecret__interface = {
+    tag: AttachmentFfiError_Tags.MalformedSecret;
+  };
+  class MalformedSecret_
+    extends UniffiError
+    implements MalformedSecret__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "AttachmentFfiError";
+    readonly tag = AttachmentFfiError_Tags.MalformedSecret;
+    constructor() {
+      super("AttachmentFfiError", "MalformedSecret");
+    }
+
+    static new(): MalformedSecret_ {
+      return new MalformedSecret_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedSecret_ {
+      return obj.tag === AttachmentFfiError_Tags.MalformedSecret;
+    }
+    static hasInner(obj: any): obj is MalformedSecret_ {
+      return false;
+    }
+  }
+
+  type NotWhatWasAnnounced__interface = {
+    tag: AttachmentFfiError_Tags.NotWhatWasAnnounced;
+  };
+  class NotWhatWasAnnounced_
+    extends UniffiError
+    implements NotWhatWasAnnounced__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "AttachmentFfiError";
+    readonly tag = AttachmentFfiError_Tags.NotWhatWasAnnounced;
+    constructor() {
+      super("AttachmentFfiError", "NotWhatWasAnnounced");
+    }
+
+    static new(): NotWhatWasAnnounced_ {
+      return new NotWhatWasAnnounced_();
+    }
+
+    static instanceOf(obj: any): obj is NotWhatWasAnnounced_ {
+      return obj.tag === AttachmentFfiError_Tags.NotWhatWasAnnounced;
+    }
+    static hasInner(obj: any): obj is NotWhatWasAnnounced_ {
+      return false;
+    }
+  }
+
+  type Failed__interface = {
+    tag: AttachmentFfiError_Tags.Failed;
+  };
+  class Failed_ extends UniffiError implements Failed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "AttachmentFfiError";
+    readonly tag = AttachmentFfiError_Tags.Failed;
+    constructor() {
+      super("AttachmentFfiError", "Failed");
+    }
+
+    static new(): Failed_ {
+      return new Failed_();
+    }
+
+    static instanceOf(obj: any): obj is Failed_ {
+      return obj.tag === AttachmentFfiError_Tags.Failed;
+    }
+    static hasInner(obj: any): obj is Failed_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is AttachmentFfiError {
+    return obj[uniffiTypeNameSymbol] === "AttachmentFfiError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    MalformedSecret: MalformedSecret_,
+    NotWhatWasAnnounced: NotWhatWasAnnounced_,
+    Failed: Failed_,
+  });
+})();
+/**
+ * The wire mirror of `matrix_crypto_core::AttachmentError`.
+ *
+ * A separate enum, for the reason `HistoryFfiError` states above: variants
+ * carry ordinals the generated bindings reproduce as `case N`, so a surface
+ * with its own kinds gets its own enum rather than borrowing one whose
+ * numbering it would then be bound by.
+ */
+export type AttachmentFfiError = InstanceType<
+  (typeof AttachmentFfiError)[
+    | "MalformedSecret"
+    | "NotWhatWasAnnounced"
+    | "Failed"]
+>;
+
+// FfiConverter for enum AttachmentFfiError
+const FfiConverterTypeAttachmentFfiError = (() => {
+  type TypeName = AttachmentFfiError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return new AttachmentFfiError.MalformedSecret();
+        case 2:
+          return new AttachmentFfiError.NotWhatWasAnnounced();
+        case 3:
+          return new AttachmentFfiError.Failed();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value.tag) {
+        case AttachmentFfiError_Tags.MalformedSecret: {
+          c.writeI32(1);
+          return;
+        }
+        case AttachmentFfiError_Tags.NotWhatWasAnnounced: {
+          c.writeI32(2);
+          return;
+        }
+        case AttachmentFfiError_Tags.Failed: {
+          c.writeI32(3);
+          return;
+        }
+        default:
+          // Throwing from here means that AttachmentFfiError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case AttachmentFfiError_Tags.MalformedSecret: {
+          return 4;
+        }
+        case AttachmentFfiError_Tags.NotWhatWasAnnounced: {
+          return 4;
+        }
+        case AttachmentFfiError_Tags.Failed: {
+          return 4;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
     }
   }
   return new FFIConverter();
@@ -6233,6 +6584,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment() !==
+    5955
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event() !==
     44961
   ) {
@@ -6262,6 +6621,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment() !==
+    44025
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment"
     );
   }
   if (
@@ -6472,6 +6839,7 @@ export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
     FfiConverterTypeAccountDataEntry,
+    FfiConverterTypeAttachmentFfiError,
     FfiConverterTypeCodeCapabilities,
     FfiConverterTypeCryptoMachineConfig,
     FfiConverterTypeCryptoObserver,
@@ -6494,6 +6862,7 @@ export default Object.freeze({
     FfiConverterTypeSasEmoji,
     FfiConverterTypeSasMaterial,
     FfiConverterTypeScannableCode,
+    FfiConverterTypeSealedAttachment,
     FfiConverterTypeSenderTrustRequirement,
     FfiConverterTypeSenderVerification,
     FfiConverterTypeSessionFfiError,

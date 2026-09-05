@@ -55,6 +55,7 @@ export type {
   IdentityStatus,
   OutgoingRequest,
   RecoverySetup,
+  SealedAttachment,
 } from './facade'
 export {
   acceptVerification,
@@ -66,8 +67,10 @@ export {
   createCrossSigningIdentity,
   createCryptoMachine,
   createRecovery,
+  decryptAttachment,
   decryptEvent,
   discardScopeKey,
+  encryptAttachment,
   encryptEvent,
   encryptionSlice,
   exportSecrets,

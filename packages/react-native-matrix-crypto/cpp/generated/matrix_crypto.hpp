@@ -40,10 +40,12 @@ class NativeMatrixCrypto : public jsi::HostObject {
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_create_crypto_machine(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_create_identity(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_create_recovery(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_device_identity_keys(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_device_statuses(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_encrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_identity_status(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_fn_func_mark_request_failed(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
@@ -125,10 +127,12 @@ class NativeMatrixCrypto : public jsi::HostObject {
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_create_crypto_machine(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_create_identity(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_create_recovery(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_device_identity_keys(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_device_statuses(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
+    jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_identity_status(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
     jsi::Value cpp_uniffi_matrix_crypto_ffi_checksum_func_mark_request_failed(jsi::Runtime& rt, const jsi::Value& thisVal, const jsi::Value* args, size_t count);
