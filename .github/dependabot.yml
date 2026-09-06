@@ -1,0 +1,45 @@
+version: 2
+
+# The other half of pinning actions to commit SHAs.
+#
+# `ci: Pin third-party actions to full commit SHAs` (#39, issue #37) replaced
+# every mutable major tag in these workflows with a 40-character commit, so a
+# tag moving underneath the release job -- which runs with NPM_TOKEN in scope
+# -- can no longer change what executes. That closed one hole and opened a
+# smaller one: a pin never moves on its own, so a security fix published by
+# an action's author never arrives either. GitHub's own hardening guidance
+# pairs SHA pinning with this file for exactly that reason.
+#
+# Dependabot rewrites the SHA and the `# vN` comment beside it together, so
+# the convention those workflows follow survives the bump, and the pull
+# request it opens carries the upstream changelog for the range.
+#
+# ONLY `github-actions` IS WATCHED HERE, and the omissions are deliberate:
+#
+#   - `npm` would open pull requests against a yarn workspace whose lockfile
+#     this repository pins on purpose -- `prettier` is exact (#34) because
+#     3.6 and 3.9 disagree about this tree, and `@react-native/eslint-config`
+#     is exact because it carries the rule set. A bot bumping those is a
+#     formatter change arriving as a dependency update.
+#   - `cargo` would bump `matrix-sdk-crypto`, which is not a dependency this
+#     repository takes without reading: 0.18 is what the history-bundle and
+#     trust-requirement surfaces are written against, and `gate:drift` makes
+#     every bump a codegen change as well.
+#
+# Both are decisions to revisit, not oversights. `audit` in ci.yml is what
+# watches the npm side meanwhile: it reads the packed tarball on every pull
+# request and fails on anything at `low` or above in this package's own
+# dependencies.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      # Weekly rather than daily: an advisory against an action is not an
+      # emergency the way one against a shipped dependency is, and a bot that
+      # opens noise every morning is a bot whose pull requests stop being
+      # read.
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
