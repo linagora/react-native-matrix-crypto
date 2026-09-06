@@ -247,7 +247,7 @@ jobs:
             MatrixCryptoFramework.xcframework .build-provenance/ios.env
           echo "Slices built:"
           ls MatrixCryptoFramework.xcframework | sed 's/^/  /'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ios-xcframework
           path: ${{ runner.temp }}/ios-xcframework.tgz
@@ -328,7 +328,7 @@ jobs:
           cd "$PKG"
           tar czf "$RUNNER_TEMP/android-binaries.tgz" \
             android/src/main/jniLibs .build-provenance/android.env
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-binaries
           path: ${{ runner.temp }}/android-binaries.tgz
@@ -419,7 +419,7 @@ jobs:
           # it, quietly or otherwise.
           REQUIRE_BUILD_PROVENANCE: '1'
         run: ./scripts/measure-artifacts.sh "release-$TAG"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: { name: artifact-sizes-release, path: artifact-sizes.json }
 
       # The same rehearsal a contributor runs locally with
@@ -450,7 +450,7 @@ jobs:
             echo "| sha256 | \`$(sha256sum "$TGZ" | cut -d' ' -f1)\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-tarball
           path: ${{ runner.temp }}/release/*.tgz
