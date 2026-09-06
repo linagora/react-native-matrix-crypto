@@ -215,6 +215,10 @@ interface NativeModuleInterface {
     passphrase: Uint8Array,
     accountData: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_attachment(
+    ciphertext: Uint8Array,
+    secret: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_decrypt_event(
     scope: Uint8Array,
     rawJson: Uint8Array,
@@ -229,6 +233,9 @@ interface NativeModuleInterface {
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(
     scope: Uint8Array
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(
+    plaintext: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_event(
     scope: Uint8Array,
@@ -333,10 +340,12 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_crypto_machine(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_recovery(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_identity_keys(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_statuses(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_identity_status(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_failed(): number;

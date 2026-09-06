@@ -14,10 +14,22 @@ import type {
 } from './types'
 import { asCryptoScopeId } from './types'
 import { toCryptoError } from './errors'
+// Imported for the documentation below and used by nothing here, on the same
+// terms `errors.ts` states: `{@link}` resolves against what the file has in
+// scope. Type-only, so it is erased.
+/* eslint-disable @typescript-eslint/no-unused-vars -- These names are in
+   scope so that the `{@link}`s resolve, and `scripts/assert-doc-links.mjs`
+   fails the build if one of them is missing. ESLint sees an unused binding
+   and would have it deleted; the gate that owns this question wants it
+   kept. */
+import type { CryptoError } from './errors'
+/* eslint-enable @typescript-eslint/no-unused-vars */
 import {
   acceptVerification as nativeAcceptVerification,
   bootstrapIdentity as nativeBootstrapIdentity,
   buildHistoryBundle as nativeBuildHistoryBundle,
+  decryptAttachment as nativeDecryptAttachment,
+  encryptAttachment as nativeEncryptAttachment,
   cancelVerification as nativeCancelVerification,
   confirmScan as nativeConfirmScan,
   confirmVerification as nativeConfirmVerification,
@@ -3350,6 +3362,111 @@ export async function receiveHistoryBundle(
       toArrayBuffer(ciphertext),
     )
     return { offered: report.offered, imported: report.imported }
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * A file, encrypted and ready to upload.
+ *
+ * @see {@link encryptAttachment}
+ */
+export interface SealedAttachment {
+  /**
+   * The encrypted attachment. Upload these bytes verbatim.
+   *
+   * There is no key in here and nothing to protect beyond the ordinary care
+   * an upload deserves: the key that opens it is
+   * {@link SealedAttachment.secret}.
+   */
+  readonly ciphertext: Uint8Array
+  /**
+   * Opaque. Keep it, send it to whoever may read the file, and hand it back
+   * to {@link decryptAttachment} unchanged.
+   *
+   * **It contains the key that decrypts the file.** It is deliberately a
+   * string rather than a structure, because you have no reason to read it:
+   * put it where the event referencing the attachment goes, which is inside
+   * the conversation's own encryption, and nowhere else.
+   */
+  readonly secret: string
+}
+
+/**
+ * Encrypts a file, and hands back the ciphertext to upload and the secret
+ * that opens it.
+ *
+ * # Why this library encrypts, rather than handing you a key
+ *
+ * This is the same split {@link buildHistoryBundle} documents, and it is here
+ * for the same reason: that one was tried the other way round first. Handing
+ * a product a plaintext and a key is, on React Native, an instruction to
+ * implement Matrix's attachment encryption in JavaScript — a platform with no
+ * AES and no SHA-256, and the most to lose if it is done wrong.
+ *
+ * # What this does not do
+ *
+ * **It does not upload.** The media repository is yours: it has the
+ * homeserver's address, the access token and the retry policy, and a crypto
+ * library that acquired an HTTP client would have acquired all three.
+ *
+ * A fresh key every call, including for the same bytes. Encrypting one file
+ * twice gives two ciphertexts and two secrets, which costs nothing — the
+ * discarded one was never uploaded.
+ *
+ * The whole file is held in memory twice over, once as plaintext and once as
+ * ciphertext. That is a real limit and it is yours to respect: this takes
+ * bytes rather than a stream because the boundary it crosses has none.
+ *
+ * @param plaintext The file's bytes.
+ * @returns The bytes to upload, and the secret to keep.
+ * @throws {@link CryptoError} if the file could not be encrypted.
+ */
+export async function encryptAttachment(
+  plaintext: Uint8Array,
+): Promise<SealedAttachment> {
+  try {
+    const sealed = await nativeEncryptAttachment(toArrayBuffer(plaintext))
+    return {
+      ciphertext: new Uint8Array(sealed.ciphertext),
+      secret: sealed.secret,
+    }
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Decrypts a file this library encrypted and you downloaded.
+ *
+ * # Two failures, told apart
+ *
+ * A secret this library did not produce is refused as malformed. Bytes that
+ * are not the bytes the secret announced are refused as *that*, separately —
+ * Matrix's attachment encryption carries a SHA-256 of the ciphertext, and
+ * this is that check failing. It means the download was truncated, corrupted
+ * or substituted.
+ *
+ * The distinction is worth acting on: the first is a bug upstream of the
+ * download and retrying will not help, the second is a download worth making
+ * again. Neither ever returns partial bytes — the check runs at the end of
+ * the file, and a failure discards everything.
+ *
+ * @param ciphertext What you downloaded.
+ * @param secret {@link SealedAttachment.secret}, handed back unchanged.
+ * @returns The file's bytes.
+ * @throws {@link CryptoError} if the secret is malformed, or if the bytes are
+ * not what it announced.
+ */
+export async function decryptAttachment(
+  ciphertext: Uint8Array,
+  secret: string,
+): Promise<Uint8Array> {
+  try {
+    return new Uint8Array(
+      await nativeDecryptAttachment(toArrayBuffer(ciphertext), secret),
+    )
   } catch (e) {
     throw toCryptoError(e)
   }

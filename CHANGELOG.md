@@ -16,6 +16,27 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.6.0
+
+### Added
+
+- `encryptAttachment` and `decryptAttachment`, and the `SealedAttachment`
+  record they hand back. A product encrypts a file, uploads the ciphertext
+  itself, and keeps an opaque secret; on the other side it downloads and
+  decrypts. The same primitives the history bundle already used internally,
+  now available for arbitrary files, so a React Native product never
+  implements Matrix's attachment encryption — it has no AES and no SHA-256,
+  and that lesson cost a redesign during the bundle work.
+
+  Two failures are told apart, and the difference is worth acting on:
+  `malformed_secret` is a statement about the secret and retrying will not
+  help, while `not_what_was_announced` is the SHA-256 check failing against
+  the downloaded bytes, which is a download worth making again. Neither ever
+  returns a partial file.
+
+  No upload and no download happen in this library. The media repository
+  stays the product's, on the same boundary `shareHistoryBundle` draws.
+
 ## 0.5.0
 
 History sharing, and the rotation that makes a removal mean something.
