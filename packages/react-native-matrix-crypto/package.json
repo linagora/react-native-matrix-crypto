@@ -24,6 +24,7 @@
     "MatrixCryptoFramework.xcframework",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
     "!src/**/*.test.ts",
     "!src/**/*.type-test.ts",
     "!interop/**/*.test.ts"

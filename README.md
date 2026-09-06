@@ -745,7 +745,7 @@ Every one of these runs in CI. Each has been observed rejecting a real violation
 | `gate:lint-coverage`       | every tracked file ESLint should lint is one it actually opened, so `yarn lint` cannot go green on a set it never read        |
 | `gate:surface`             | every name a public module exports reaches `src/index.ts`, so nothing ships unreachable                                       |
 | `gate:doc-links`           | every doc link, in Rust and in TypeScript, points at something that exists                                                    |
-| `gate:readme`              | the README npm shows is the README GitHub shows, and every gate here runs in CI                                               |
+| `gate:readme`              | the README and CHANGELOG npm shows are the ones GitHub shows, and every gate here runs in CI                                  |
 | `gate:uia-example`         | the worked example for the signing-keys authentication loop runs the same steps as the test that proves it                    |
 | `gate:measure-guards`      | the B2 measurement harness still refuses the runs it documents refusing                                                       |
 | `gate:measure-guards-ios`  | the same, for the iOS harness, including its refusal to launch into a log stream it cannot show was already attached          |
