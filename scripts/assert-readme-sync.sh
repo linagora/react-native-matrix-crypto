@@ -12,28 +12,52 @@ set -euo pipefail
 # interoperability proof was added to the root copy alone -- which is the
 # section a consumer arriving from npm would most want, and the one they would
 # not have seen.
-ROOT_README="README.md"
-PKG_README="packages/react-native-matrix-crypto/README.md"
+# CHANGELOG.md is the second pair, for the same reason and by the same
+# mechanism. It shipped nowhere until it was named in the package's `files`
+# list, so a consumer reading the registry page could not see what changed
+# between the version they hold and the version they are installing without
+# leaving npm for GitHub.
+SYNCED_PAIRS="README.md packages/react-native-matrix-crypto/README.md
+CHANGELOG.md packages/react-native-matrix-crypto/CHANGELOG.md"
 
 # Refuse to pass having scanned nothing. A renamed or moved file would
 # otherwise make `diff` fail loudly on a missing path, or -- worse, if someone
 # "fixed" that with a `-N` -- make two absent files compare equal. The sibling
 # gates carry the same guard for the same reason.
-for f in "$ROOT_README" "$PKG_README"; do
-  if [ ! -s "$f" ]; then
-    echo "FAIL: refusing to pass having scanned nothing."
-    echo "      $f is missing or empty, so this gate cannot compare anything."
+PAIRS_CHECKED=0
+while read -r ROOT_COPY PKG_COPY; do
+  [ -z "$ROOT_COPY" ] && continue
+  for f in "$ROOT_COPY" "$PKG_COPY"; do
+    if [ ! -s "$f" ]; then
+      echo "FAIL: refusing to pass having scanned nothing."
+      echo "      $f is missing or empty, so this gate cannot compare anything."
+      exit 1
+    fi
+  done
+
+  if ! diff -u "$ROOT_COPY" "$PKG_COPY"; then
+    echo
+    echo "FAIL: $ROOT_COPY and its package copy have diverged."
+    echo "      The package copy is what npm shows a consumer. Copy the root one over it:"
+    echo "        cp $ROOT_COPY $PKG_COPY"
     exit 1
   fi
-done
+  PAIRS_CHECKED=$((PAIRS_CHECKED + 1))
+done <<EOF
+$SYNCED_PAIRS
+EOF
 
-if ! diff -u "$ROOT_README" "$PKG_README"; then
-  echo
-  echo "FAIL: the two READMEs have diverged."
-  echo "      The package copy is what npm shows a consumer. Copy the root one over it:"
-  echo "        cp $ROOT_README $PKG_README"
+# The list itself could be emptied, and an empty loop passes silently. This is
+# the same "refuse to pass having compared nothing" rule the per-file guard
+# above states, applied one level up, to the list rather than to a file.
+if [ "$PAIRS_CHECKED" -ne 2 ]; then
+  echo "FAIL: refusing to pass having compared $PAIRS_CHECKED pair(s)."
+  echo "      SYNCED_PAIRS names the files npm shows a consumer; two pairs"
+  echo "      are expected, the README and the CHANGELOG."
   exit 1
 fi
+
+ROOT_README="README.md"
 
 # --- "Every one of these runs in CI." ---------------------------------------
 #
