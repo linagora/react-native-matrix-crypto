@@ -174,6 +174,55 @@ fn keys_reach_the_backup_and_open_again_under_the_key_that_was_handed_out() {
              restore"
         );
 
+        // REPLACING THE KEY MUST NOT WEDGE THE PUMP, which is the failure
+        // this sequence exists to catch and which nothing else would.
+        //
+        // Upstream's `enable_backup_v1` writes the key and never touches
+        // `pending_backup`, and `backup()` hands an existing pending request
+        // back without comparing its version. So a batch left in flight
+        // across a version change would be re-emitted for ever carrying the
+        // retired version, the homeserver would answer
+        // `M_WRONG_ROOM_KEYS_VERSION`, and `mark_request_failed` leaves the
+        // entry pending on purpose. The pump would never move again --
+        // through the one path ADR-0013 requires to exist, replacing a key
+        // somebody wrote down badly.
+        //
+        // Share a key so there is something to batch, drain so a batch is
+        // outstanding, then move to a new version without acknowledging it.
+        share_scope_key("!second:example.org", &["@bob:example.org".to_string()])
+            .await
+            .expect("sharing a second scope key must not fail");
+
+        let in_flight = take_outgoing_requests()
+            .await
+            .expect("the pump must be drainable");
+        assert!(
+            in_flight.iter().any(|r| r.kind == "room_key_backup"),
+            "this test needs a batch actually in flight for the property below \
+             to be exercised"
+        );
+
+        let replacement = create_backup();
+        enable_backup(&replacement.sealing_key, "580042")
+            .await
+            .expect("replacing the key must not fail");
+
+        let after_replacing = take_outgoing_requests()
+            .await
+            .expect("the pump must be drainable");
+        for request in &after_replacing {
+            if request.kind != "room_key_backup" {
+                continue;
+            }
+            let body: serde_json::Value =
+                serde_json::from_str(&request.body).expect("the pump's body must be JSON");
+            assert_eq!(
+                body["version"], "580042",
+                "a batch carrying the retired version must not survive the \
+                 replacement -- it is the one that can never be accepted"
+            );
+        }
+
         disable_backup()
             .await
             .expect("disabling a backup must not fail");

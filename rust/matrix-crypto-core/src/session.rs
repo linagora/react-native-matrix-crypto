@@ -2985,10 +2985,7 @@ pub async fn take_outgoing_requests() -> Result<Vec<OutgoingRequest>, SessionErr
     //
     // The backup batch is asked for in the same trip, and only when a backup
     // is enabled -- see `PendingKind::RoomKeyBackup` for why that guard is
-    // not merely about cost. `Option<Result<_>>` rather than a flattened
-    // `Option`: a store failure while assembling the batch is a failure, and
-    // swallowing it here would leave a backup that silently never
-    // progresses.
+    // not merely about cost.
     let (account, upstream, backup) = with_machine(|machine| {
         Box::pin(async move {
             let requests = machine.outgoing_requests().await;
@@ -3002,10 +2999,24 @@ pub async fn take_outgoing_requests() -> Result<Vec<OutgoingRequest>, SessionErr
     })
     .await?;
     let upstream = upstream.map_err(|_upstream| SessionError::Failed)?;
-    let backup = match backup {
-        Some(batch) => batch.map_err(|_upstream| SessionError::Failed)?,
-        None => None,
-    };
+
+    // **A backup that cannot be assembled costs the backup, not the drain.**
+    //
+    // This propagated the store error at first, on the reading that
+    // swallowing it would leave a backup silently never progressing. That
+    // reading had the priority backwards. The requests in `upstream` are the
+    // ones the account depends on to work at all -- device keys, one-time
+    // keys, who else's devices exist -- and failing the whole call over the
+    // backup would stop a person receiving messages because tomorrow's copy
+    // of their keys could not be built. Sync is what a conversation depends
+    // on; a backup is what next week depends on.
+    //
+    // Silent is what it is not. `backup_state`'s two counts are how a
+    // product sees this: `backed_up` well below `total` on a device that has
+    // been draining and reporting its pump is a backup that is not
+    // progressing, and that function's own doc comment says so. The next
+    // drain asks again, so a transient failure costs one cycle.
+    let backup = backup.and_then(|batch| batch.ok()).flatten();
 
     // Every entry this call will hand out, built in full before
     // `state.pending` is touched: a serialisation failure partway through

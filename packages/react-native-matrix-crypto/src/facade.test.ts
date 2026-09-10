@@ -3932,6 +3932,27 @@ describe('key backup', () => {
     )
   })
 
+  it('reports a native module that never installed as a CryptoError', () => {
+    // The Rust side declares no error type, and this call was written
+    // unwrapped for that reason. What that missed is what
+    // `offerScannableCodes` had already recorded: the layer between here and
+    // there can fail on its own, and a product should catch one kind of
+    // thing from this surface rather than two. `createKeyBackup` is the one
+    // call made before a store exists, so it is the likeliest place to meet
+    // a module that failed to install.
+    vi.mocked(nativeCreateBackup).mockImplementationOnce(() => {
+      throw new TypeError("Cannot read property 'createBackup' of undefined")
+    })
+
+    let caught: unknown
+    try {
+      createKeyBackup()
+    } catch (e) {
+      caught = e
+    }
+    expect(isCryptoError(caught)).toBe(true)
+  })
+
   it('sends the sealing key and the version down in that order', async () => {
     await enableKeyBackup('a-sealing-key', '947281')
 

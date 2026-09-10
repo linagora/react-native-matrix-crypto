@@ -33,6 +33,12 @@ Versions 0.1.0 through 0.3.0 predate this file.
   changes no state, so its result can be shown and refused before anything is
   published.
 
+  `restoreKeyBackup` tells a damaged download apart from a wrong key. A body
+  whose entries cannot be read at all is `malformed_payload`, because those
+  entries never reached the key and so cannot be evidence about it;
+  `wrong_key` is reserved for a key that was given something to open and did
+  not open it.
+
 - An eighth outgoing request kind, `room_key_backup`, for
   `PUT /_matrix/client/v3/room_keys/keys`. It appears only after
   `enableKeyBackup`, so a product that never sets a backup up sees no change
@@ -62,6 +68,16 @@ Versions 0.1.0 through 0.3.0 predate this file.
   already.
 
 ### Changed
+
+- **`enableKeyBackup` on a different version drops the batch already in
+  flight.** Nothing upstream does it: `enable_backup_v1` writes the key and
+  never touches the pending request, and the backup machine hands an existing
+  one back without comparing its version. So replacing a recovery key while a
+  batch was unacknowledged would have re-emitted the _retired_ version on
+  every drain for ever — the homeserver answering `M_WRONG_ROOM_KEYS_VERSION`
+  and the pump never moving again, through the one path that exists to help
+  somebody who wrote their key down badly. Re-enabling the _same_ version, which
+  is what every launch does, is untouched.
 
 - **The private half of a backup key is never written to the crypto store.**
   Upstream offers to keep it there for gossiping between devices and this

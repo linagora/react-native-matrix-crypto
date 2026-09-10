@@ -310,8 +310,46 @@ pub async fn enable_backup(sealing_key: &str, version: &str) -> Result<(), Backu
         .map_err(|_| BackupError::MalformedIdentifier)?;
     key.set_version(version.to_owned());
 
+    let version = version.to_owned();
     with_machine(move |machine| {
-        Box::pin(async move { machine.backup_machine().enable_backup_v1(key).await })
+        Box::pin(async move {
+            let backups = machine.backup_machine();
+
+            // MOVING TO A DIFFERENT VERSION MUST DROP THE BATCH ALREADY IN
+            // FLIGHT, and nothing upstream does it.
+            //
+            // `enable_backup_v1` writes the key and nothing else; it never
+            // touches `pending_backup`. `BackupMachine::backup` hands back
+            // an existing pending request unconditionally, without comparing
+            // its version. So enabling a new version while a batch is
+            // unacknowledged makes the pump re-emit a body carrying the
+            // *retired* version on every drain -- the homeserver answers
+            // `M_WRONG_ROOM_KEYS_VERSION`, `mark_request_failed` leaves the
+            // entry pending on purpose, and the pump never moves again.
+            //
+            // That is precisely the path ADR-0013 requires to exist: *« Elle
+            // peut être remplacée. Remplacer fait une nouvelle version de
+            // sauvegarde et retire l'ancienne clé. »* Replacing a key that
+            // wedged the pump for ever would be a remedy worse than the
+            // problem it fixes.
+            //
+            // `disable_backup` is what clears the slot, and its other effect
+            // is not collateral here but correct: it marks every key
+            // un-backed-up, and keys backed up to the version being left
+            // genuinely are not backed up to the one being joined.
+            //
+            // **Guarded on the version actually differing, and that guard is
+            // load-bearing.** Re-enabling the *same* version is the ordinary
+            // path -- this call is made on every launch -- and resetting the
+            // backup state there would re-upload every key this device holds
+            // on every start.
+            match backups.backup_version().await {
+                Some(current) if current != version => backups.disable_backup().await?,
+                _ => {}
+            }
+
+            backups.enable_backup_v1(key).await
+        })
     })
     .await?
     .map_err(|_upstream| BackupError::Failed)
@@ -424,6 +462,10 @@ pub async fn restore_backup(
         serde_json::from_str(keys).map_err(|_| BackupError::MalformedPayload)?;
 
     let mut offered: u32 = 0;
+    // Counted apart from `offered`, and the difference is the whole of the
+    // `WrongKey` decision below. An entry that will not *parse* was never
+    // offered to the key, so it cannot be evidence about the key.
+    let mut tried: u32 = 0;
     let mut decrypted: Vec<ExportedRoomKey> = Vec::new();
 
     for (room_id, backup) in downloaded.rooms {
@@ -441,6 +483,8 @@ pub async fn restore_backup(
                 continue;
             };
 
+            tried = tried.saturating_add(1);
+
             let Ok(room_key) = key.decrypt_session_data(data.session_data) else {
                 continue;
             };
@@ -453,15 +497,28 @@ pub async fn restore_backup(
         }
     }
 
-    // Nothing decrypted, and something was offered: this is the wrong key,
-    // not an empty backup. Reported as such rather than as a successful
-    // import of nothing, which is what the counts alone would have said.
+    // Nothing decrypted out of everything the key was actually given: this
+    // is the wrong key, not an empty backup. Reported as such rather than as
+    // a successful import of nothing, which is what the counts alone would
+    // have said.
     //
     // The test is "nothing at all", not "some failed": a backup can
     // genuinely carry an entry this device cannot read, and a run that
     // recovered even one key was opened by the right key by definition.
-    if offered > 0 && decrypted.is_empty() {
+    //
+    // **It is `tried`, not `offered`, and that distinction is a defect this
+    // code had.** An entry that will not deserialise never reached the key,
+    // so a body whose entries are all malformed would have been reported as
+    // `WrongKey` -- telling somebody to find a different secret when the
+    // secret was never the problem, which is the exact fold that kind's own
+    // doc comment forbids. A download that arrives damaged is
+    // `MalformedPayload`, and `tried == 0` with `offered > 0` is precisely
+    // that: entries existed and not one of them was a key.
+    if tried > 0 && decrypted.is_empty() {
         return Err(BackupError::WrongKey);
+    }
+    if offered > 0 && tried == 0 {
+        return Err(BackupError::MalformedPayload);
     }
 
     let version = version.to_owned();
@@ -689,6 +746,60 @@ mod tests {
 
         let sessions = &parsed.rooms.values().next().unwrap().sessions;
         assert!(sessions.contains_key("session-id"));
+    }
+
+    /// A download whose entries are all unreadable is a damaged file, not a
+    /// wrong key -- and the two send a person to opposite remedies.
+    ///
+    /// This is the defect the `tried` counter exists for. Counting `offered`
+    /// alone, every one of these bodies reported `WrongKey`, which tells
+    /// somebody to go and find a different secret when the secret was never
+    /// looked at.
+    #[test]
+    fn a_download_nothing_could_even_be_read_from_is_not_the_key_s_fault() {
+        let setup = create_backup();
+
+        for entry in [
+            // Shaped like an entry and missing what one has.
+            serde_json::json!({ "not": "a key backup entry" }),
+            // The right fields, the wrong types.
+            serde_json::json!({
+                "first_message_index": "not a number",
+                "forwarded_count": 0,
+                "is_verified": true,
+                "session_data": { "ciphertext": "AAAA", "mac": "AAAA", "ephemeral": "AAAA" },
+            }),
+        ] {
+            let body = serde_json::json!({
+                "rooms": { "!scope:example.org": { "sessions": { "s": entry } } }
+            })
+            .to_string();
+
+            assert_eq!(
+                futures::executor::block_on(restore_backup(&setup.restore_key, "947281", &body)),
+                Err(BackupError::MalformedPayload),
+                "an entry the key was never given cannot be evidence about the key"
+            );
+        }
+    }
+
+    /// The other side of the same line: a body with no entries at all is an
+    /// empty backup, which is a success and not a fault of any kind.
+    #[test]
+    fn an_empty_backup_is_not_a_failure() {
+        let setup = create_backup();
+
+        // `NotInitialised` and not a payload or key error: the emptiness got
+        // past both checks and the call went on to the store, which is the
+        // whole assertion. There is no machine here to import into.
+        assert_eq!(
+            futures::executor::block_on(restore_backup(
+                &setup.restore_key,
+                "947281",
+                r#"{"rooms":{}}"#
+            )),
+            Err(BackupError::NotInitialised)
+        );
     }
 
     /// `enable_backup` refuses an empty version before it reaches upstream,

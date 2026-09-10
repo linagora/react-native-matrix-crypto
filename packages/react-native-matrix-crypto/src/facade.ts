@@ -3534,8 +3534,14 @@ export interface BackupState {
    * this library cannot know without a request it will not make.
    */
   enabled: boolean
-  /** The version being backed up to, if any. Opaque; never parse it. */
-  version: string | undefined
+  /**
+   * The version being backed up to, if any. Opaque; never parse it.
+   *
+   * Optional rather than required-and-possibly-undefined, which is the shape
+   * every other absent value on this surface takes (`emoji?:`,
+   * `senderVerification?:`).
+   */
+  version?: string
   /** How many message keys this device holds. */
   total: number
   /**
@@ -3591,11 +3597,22 @@ export interface BackupImport {
  * blind store.
  */
 export function createKeyBackup(): BackupSetup {
-  // Not wrapped in try/catch: the native call is infallible -- it declares
-  // no error type at all -- so there is nothing here for `toCryptoError` to
-  // convert and a catch would be scaffolding around a case that cannot
-  // occur.
-  const setup = nativeCreateBackup()
+  let setup
+  try {
+    setup = nativeCreateBackup()
+  } catch (e) {
+    // The Rust side declares no error type at all, and this was written
+    // unwrapped for that reason -- which is the mistake `offerScannableCodes`
+    // above had already recorded the answer to: *"the layer between here and
+    // there can fail on its own -- a native module that never installed
+    // throws from every call that reaches for it -- and a product should
+    // catch one kind of thing from this surface rather than two."*
+    //
+    // Unwrapped, a product whose native module failed to install would get
+    // something `isCryptoError` says nothing about, from the one call it
+    // makes before any store exists.
+    throw toCryptoError(e)
+  }
   const { restoreKey, sealingKey, versionRequest } = setup
   return {
     restoreKey,
