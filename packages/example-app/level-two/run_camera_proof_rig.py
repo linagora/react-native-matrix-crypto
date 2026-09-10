@@ -187,12 +187,39 @@ EXPECTED_STEPS = 5
 IDENTITY_TIMEOUT_SECONDS = int(os.environ.get("CAMERA_PROOF_IDENTITY_TIMEOUT_SECONDS", "300"))
 
 
-def detect_phone_serial():
-    """The phone is every adb device that is not the declared emulator.
+# adb's OWN name for a locally running AVD. Not a user-set string: the
+# emulator is registered on its console port and adb names it from that,
+# while a USB handset is listed by its hardware serial and an `adb connect`
+# device by host:port. Matching this shape is therefore evidence, and it
+# costs no adb call, which matters: see detect_phone_serial.
+LOCAL_EMULATOR_SERIAL = re.compile(r"^emulator-\d+$")
 
-    Deliberately strict: zero candidates and two-or-more candidates are both
-    refusals, because a driver that guesses which physical phone to drive is
-    worse than a driver that declines.
+
+def detect_phone_serial():
+    """The phone is the one attached device that is not an emulator.
+
+    Still deliberately strict about PHONES, which is what the strictness was
+    ever for: zero candidates and two-or-more candidates are both refusals,
+    because a driver that guesses which physical phone to drive is worse
+    than a driver that declines.
+
+    What changed, and why. MEASURED on the rig 2026-09-10: this leg died at
+    "found 2: ['59021FDCG003NW', 'emulator-5556']" because a SECOND emulator
+    was running for unrelated work, after the run had already spent ten
+    minutes building an APK. The rig is somebody's daily Mac rather than
+    dedicated hardware, so other AVDs on it are ordinary rather than a
+    misconfiguration, and counting them as candidate phones refuses a rig
+    that is in fact fine.
+
+    Foreign devices are classified WITHOUT talking to them, and that is
+    deliberate too. The first version of this fix asked every device
+    `getprop ro.kernel.qemu`, which is better evidence; measured the same
+    day, that call hung the full 60 seconds against the very emulator it
+    was meant to skip, because another program on the machine was holding
+    it with a long `uiautomator dump`. A rig that cannot start because
+    somebody else's AVD is busy is the same failure wearing a new hat. So:
+    shape for the ones being excluded, and one positive check below on the
+    single device this run is actually going to drive.
     """
     listed = run_command(["adb", "devices"], timeout=60).stdout
     serials = []
@@ -200,12 +227,30 @@ def detect_phone_serial():
         parts = line.split()
         if len(parts) == 2 and parts[1] == "device":
             serials.append(parts[0])
-    candidates = [serial for serial in serials if serial != EMULATOR_SERIAL]
+    emulators = [serial for serial in serials
+                 if serial == EMULATOR_SERIAL or LOCAL_EMULATOR_SERIAL.match(serial)]
+    candidates = [serial for serial in serials if serial not in emulators]
     require(len(candidates) == 1,
-            f"expected exactly one non-emulator device on adb (the mounted phone), "
-            f"found {len(candidates)}: {candidates or 'none'}.\n"
-            "      Connect the rig's phone by USB and make sure no other device is.")
-    return candidates[0]
+            f"expected exactly one physical phone on adb, found "
+            f"{len(candidates)}: {candidates or 'none'}.\n"
+            f"      adb listed {serials or 'none'}; emulators ignored: "
+            f"{emulators or 'none'} (the rig's own is {EMULATOR_SERIAL}).\n"
+            "      Connect the rig's phone by USB and make sure no OTHER "
+            "PHONE is. Other emulators on this machine are fine.")
+    phone = candidates[0]
+
+    # The one probe, on the one device this run will drive. It catches an
+    # emulator reached over `adb connect` (named host:port, so the shape
+    # test above cannot see it), and a phone that cannot answer this cannot
+    # be driven anyway, so a hang here is a genuine finding rather than
+    # somebody else's AVD being busy.
+    kind = adb_on(phone, "shell", "getprop", "ro.build.characteristics", timeout=60)
+    require("emulator" not in kind.stdout.strip().split(","),
+            f"{phone} is the only candidate for the mounted phone, but it "
+            "reports itself as an emulator. This leg proves that a REAL "
+            "camera reads the code, so it refuses to scan with a virtual "
+            "one. Remedy: connect the rig's phone by USB.")
+    return phone
 
 
 def adb_on(serial, *args, timeout=300):
