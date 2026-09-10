@@ -2020,3 +2020,70 @@ pub async fn restore_backup(
         .map(Into::into)
         .map_err(Into::into)
 }
+
+/// The wire mirror of `matrix_crypto_core::VaultError`.
+///
+/// A new enum rather than a fold into `BackupFfiError`, on the rule
+/// `HistoryFfiError` states in full and for a second reason of its own: the
+/// two surfaces fail differently on purpose. A vault has a passphrase and an
+/// authenticated ciphertext, so `WrongPassphrase` covers a condition the
+/// server backup cannot have, and `WrongKey` covers one a vault cannot.
+#[derive(Debug, uniffi::Error, thiserror::Error)]
+pub enum VaultFfiError {
+    #[error("no crypto machine has been created")]
+    NotInitialised,
+    #[error("the crypto operation failed")]
+    Failed,
+    #[error("the payload could not be parsed")]
+    MalformedPayload,
+    #[error("the passphrase did not open this vault")]
+    WrongPassphrase,
+}
+
+impl From<matrix_crypto_core::VaultError> for VaultFfiError {
+    fn from(error: matrix_crypto_core::VaultError) -> Self {
+        use matrix_crypto_core::VaultError as Core;
+        match error {
+            Core::NotInitialised => VaultFfiError::NotInitialised,
+            Core::Failed => VaultFfiError::Failed,
+            Core::MalformedPayload => VaultFfiError::MalformedPayload,
+            Core::WrongPassphrase => VaultFfiError::WrongPassphrase,
+        }
+    }
+}
+
+/// Puts every scope key this account holds into one file, encrypted under
+/// `passphrase`. Mirrors `create_key_vault`; see its own doc comment in
+/// `matrix-crypto-core::vault`, and that module's own, for why the format is
+/// Matrix's rather than this library's, why nothing is written to disk here,
+/// and why the call takes a noticeable moment.
+///
+/// **What comes back is a plaintext secret in the sense that matters**: it
+/// is every key this account holds, protected by whatever the person typed.
+/// It belongs in a file and then nowhere -- not a log, not a variable that
+/// outlives the operation.
+#[uniffi::export]
+pub async fn create_key_vault(passphrase: String) -> Result<String, VaultFfiError> {
+    matrix_crypto_core::create_key_vault(&passphrase)
+        .await
+        .map_err(Into::into)
+}
+
+/// Opens a vault and imports the keys it holds. Mirrors `open_key_vault`;
+/// see its own doc comment for why `imported` below `offered` is not a
+/// failure, and why a wrong passphrase and an altered file are one answer
+/// rather than two.
+///
+/// Reuses `BackupImport` rather than declaring a third record of the same
+/// two counts: it is the same fact -- how many keys a file offered, and how
+/// many landed -- and the two surfaces are siblings.
+#[uniffi::export]
+pub async fn open_key_vault(
+    vault: String,
+    passphrase: String,
+) -> Result<BackupImport, VaultFfiError> {
+    matrix_crypto_core::open_key_vault(&vault, &passphrase)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}

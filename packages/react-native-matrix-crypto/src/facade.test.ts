@@ -20,6 +20,7 @@ import {
   confirmVerification,
   createCryptoMachine,
   createKeyBackup,
+  createKeyVault,
   buildHistoryBundle,
   createRecovery,
   decryptEvent,
@@ -42,6 +43,7 @@ import {
   offeredHistoryBundle,
   offerScannableCodes,
   openCryptoStore,
+  openKeyVault,
   receiveHistoryBundle,
   receiveSyncChanges,
   recoverIdentity,
@@ -67,6 +69,7 @@ import {
   confirmVerification as nativeConfirmVerification,
   createBackup as nativeCreateBackup,
   createCryptoMachine as nativeCreateCryptoMachine,
+  createKeyVault as nativeCreateKeyVault,
   buildHistoryBundle as nativeBuildHistoryBundle,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
@@ -87,8 +90,10 @@ import {
   recoverIdentity as nativeRecoverIdentity,
   requestSelfVerification as nativeRequestSelfVerification,
   requestVerification as nativeRequestVerification,
+  openKeyVault as nativeOpenKeyVault,
   restoreBackup as nativeRestoreBackup,
   restoreKeyMatches as nativeRestoreKeyMatches,
+  VaultFfiError,
   SenderTrustRequirement as NativeSenderTrustRequirement,
   SenderVerification as NativeSenderVerification,
   SessionFfiError,
@@ -327,6 +332,15 @@ vi.mock('./generated/matrix_crypto', async importOriginal => {
     })),
     restoreKeyMatches: vi.fn(() => true),
     restoreBackup: vi.fn(async () => ({ offered: 7, imported: 5 })),
+    // The key vault. Its import reuses `BackupImport`, so the shape below is
+    // the same and the counts are deliberately different from
+    // `restoreBackup`'s: a test that asserted 7/5 for both would pass if the
+    // two calls were wired to each other.
+    createKeyVault: vi.fn(
+      async () =>
+        '-----BEGIN MEGOLM SESSION DATA-----\nbody\n-----END MEGOLM SESSION DATA-----',
+    ),
+    openKeyVault: vi.fn(async () => ({ offered: 3, imported: 2 })),
   }
 })
 
@@ -4087,5 +4101,64 @@ describe('key backup', () => {
     const error = await getKeyBackupState().catch((e: unknown) => e)
 
     expect((error as CryptoError).kind).toBe('failed')
+  })
+})
+
+describe('the key vault', () => {
+  it('hands back the armoured file as it came, headers and all', async () => {
+    const vault = await createKeyVault('a passphrase')
+
+    expect(vault.startsWith('-----BEGIN MEGOLM SESSION DATA-----')).toBe(true)
+    expect(vault.trimEnd().endsWith('-----END MEGOLM SESSION DATA-----')).toBe(
+      true,
+    )
+    expect(vi.mocked(nativeCreateKeyVault).mock.calls.at(-1)).toEqual([
+      'a passphrase',
+    ])
+  })
+
+  it('sends the file and the passphrase down in that order, and reports both counts', async () => {
+    const opened = await openKeyVault('a vault', 'a passphrase')
+
+    // Deliberately not restoreBackup's 7/5: two calls wired to each other
+    // would pass a test that asserted the same pair for both.
+    expect(opened).toEqual({ offered: 3, imported: 2 })
+    expect(vi.mocked(nativeOpenKeyVault).mock.calls.at(-1)).toEqual([
+      'a vault',
+      'a passphrase',
+    ])
+  })
+
+  it('tells a file that is not a vault apart from a passphrase that did not open one', async () => {
+    vi.mocked(nativeOpenKeyVault).mockRejectedValueOnce(
+      new VaultFfiError.MalformedPayload(),
+    )
+    const notAVault = await openKeyVault('not a vault', 'a passphrase').catch(
+      (e: unknown) => e,
+    )
+    expect((notAVault as CryptoError).kind).toBe('malformed_payload')
+
+    vi.mocked(nativeOpenKeyVault).mockRejectedValueOnce(
+      new VaultFfiError.WrongPassphrase(),
+    )
+    const wrong = await openKeyVault('a vault', 'the wrong one').catch(
+      (e: unknown) => e,
+    )
+    // Its own kind, not the backup's 'wrong_key': a restore key is generated
+    // and shown once, a vault passphrase is chosen and typed, and the two
+    // are not the same sentence to anybody.
+    expect(isCryptoError(wrong)).toBe(true)
+    expect((wrong as CryptoError).kind).toBe('wrong_passphrase')
+    expect((wrong as CryptoError).kind).not.toBe('wrong_key')
+  })
+
+  it('reports a missing machine as one, not as a bad passphrase', async () => {
+    vi.mocked(nativeCreateKeyVault).mockRejectedValueOnce(
+      new VaultFfiError.NotInitialised(),
+    )
+
+    const error = await createKeyVault('a passphrase').catch((e: unknown) => e)
+
+    expect((error as CryptoError).kind).toBe('not_initialised')
   })
 })

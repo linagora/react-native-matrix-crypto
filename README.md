@@ -21,6 +21,7 @@ It exposes [`matrix-sdk-crypto`](https://github.com/matrix-org/matrix-rust-sdk/t
 - [Joining an identity from a second device](#joining-an-identity-from-a-second-device)
 - [Verifying a device](#verifying-a-device)
 - [Backing up the keys to your homeserver](#backing-up-the-keys-to-your-homeserver)
+- [A file instead of a homeserver](#a-file-instead-of-a-homeserver)
 - [Putting a file in a conversation](#putting-a-file-in-a-conversation)
 - [Limits you must design around](#limits-you-must-design-around)
 - [What works today](#what-works-today)
@@ -607,6 +608,28 @@ A product with only one of them may call it whatever its users will understand. 
 
 [server-side key backup]: https://spec.matrix.org/v1.11/client-server-api/#server-side-key-backups
 
+## A file instead of a homeserver
+
+The section above puts key material on a server. That is the right answer for the ordinary case of a telephone falling in a river, and it is the wrong answer for somebody who has a reason to want no key material on a server at all. `createKeyVault` and `openKeyVault` are that person's route.
+
+A vault is Matrix's own armoured export — `-----BEGIN MEGOLM SESSION DATA-----`, a passphrase of its own, and **every message key this account holds**. Element writes and reads the same format, so a file made here opens there and one made there opens here. That is the whole point of using it: a vault only one application can open is a vault that locks somebody into that application, which is why `exportSecrets` refuses to exist.
+
+**This library does not write the file.** `createKeyVault` returns the text; where it goes is a question about a share sheet, a downloads folder or an iCloud Drive directory, and that is yours. What you owe in exchange is the discipline a plaintext secret deserves: it belongs in a file and then nowhere — not a log, not a variable that outlives the save.
+
+**It takes a noticeable moment, by design.** The key is derived over half a million PBKDF2 iterations, which is the point rather than an inefficiency: the same work is what makes a guess expensive for somebody who has the file. Show that something is happening.
+
+### The two rejections need different sentences
+
+`wrong_passphrase` means the file did not open, and it has **two causes with one answer**: the passphrase is wrong, or the file has been altered since it was written. The format's MAC is computed over its ciphertext under a key derived from the passphrase, so nothing can tell them apart. Word it to cover both.
+
+That the check exists at all is the difference worth knowing between the two routes here. **A vault that has been tampered with fails to open**, rather than opening onto keys somebody else chose. The server backup's algorithm cannot make that promise.
+
+`malformed_payload` means what you passed is not a vault — bad headers, an unimplemented version, bytes that are not base64. Nothing was decrypted, so it says nothing about the passphrase, and telling somebody to check theirs sends them after a mistake they did not make.
+
+### Three things that are not each other
+
+A **key backup** lives on your homeserver and opens with a generated restore key. A **key vault** is a file and opens with a chosen passphrase. A **data export** is neither: a vault holds _keys_, an export holds _messages_, and somebody handed a vault has not received their data — they have received the means to read it.
+
 ## Putting a file in a conversation
 
 A photograph, a recording, a document. Matrix encrypts attachments separately from the events that reference them: the file is encrypted with its own key, uploaded as ordinary bytes, and the key travels inside the event, which your conversation's own encryption already protects.
@@ -691,6 +714,7 @@ await shareScopeKey(scope, await yourRemainingMembers(scope))
 | A per-call gate on who may decrypt to you                                                    | **new to this release, opt in, off by default.** `decryptEvent` takes a `senderTrustRequirement`; the two tightened tiers refuse events from devices no identity vouches for, as their own error kind `sender_not_trusted`. Refusing _unauthenticated_ senders is what a product can now ask for by construction; a sender the product itself has _verified_ is still the seven-step chain above, which the requirement neither shortens nor replaces                                                                                                                                                                                                                                                      |
 | Surviving a reinstall                                                                        | working, through `createRecovery` and `recoverIdentity`: the account's private signing keys are stored encrypted in its own account data under a passphrase, and a device that has lost its store restores them and is the same identity it was. Proven end to end against a real store. `createRecovery` refuses to write over a recovery the account already has, including one another Matrix client wrote. The two account data requests are your product's, because this library performs none                                                                                                                                                                                                        |
 | Backing up message keys to the homeserver                                                    | **new to this release.** `createKeyBackup`, `enableKeyBackup`, `getKeyBackupState`, `restoreKeyMatches`, `restoreKeyBackup`, `disableKeyBackup`, with the upload travelling as an eighth pump kind, `room_key_backup`. Proven end to end in one process: the batch leaves through the pump, the acknowledgement advances the counts, and the ciphertext opens under the key that was handed out for it and refuses another one. The algorithm does not authenticate its ciphertext — see the section above for what that means and why it is still the only option                                                                                                                                         |
+| A key vault: every message key in one file, under a passphrase                               | **new to this release.** `createKeyVault`, `openKeyVault`, over Matrix's own armoured `MEGOLM SESSION DATA` export, so a file written here opens in Element and one written there opens here. Its ciphertext **is** authenticated, unlike the server backup's: a test flips one character of a real vault's body and asserts it fails to open rather than decrypting to something else. This library writes no file and reads none                                                                                                                                                                                                                                                                         |
 | Secret export and import                                                                     | **not implemented, and not coming.** `exportSecrets` and `importSecrets` would need a `Uint8Array` container that Matrix does not define, so it would be a format this library invented and no other client could read. `createRecovery` delivers the interoperable form instead; the [design notes](DESIGN-NOTES.md) say more                                                                                                                                                                                                                                                                                                                                                                             |
 
 The unimplemented functions exist today as final types that compile, and reject at runtime with a typed `not_implemented` error. That is intentional: a consuming team can build against the real shape while the cryptography underneath is written.

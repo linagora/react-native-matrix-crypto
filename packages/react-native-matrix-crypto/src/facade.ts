@@ -36,6 +36,7 @@ import {
   confirmVerification as nativeConfirmVerification,
   createBackup as nativeCreateBackup,
   createCryptoMachine as nativeCreateCryptoMachine,
+  createKeyVault as nativeCreateKeyVault,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
   disableBackup as nativeDisableBackup,
@@ -50,6 +51,7 @@ import {
   markRequestSent as nativeMarkRequestSent,
   offerCodes as nativeOfferCodes,
   offeredHistoryBundle as nativeOfferedHistoryBundle,
+  openKeyVault as nativeOpenKeyVault,
   openCryptoStore as nativeOpenCryptoStore,
   receiveSyncChanges as nativeReceiveSyncChanges,
   receiveHistoryBundle as nativeReceiveHistoryBundle,
@@ -3769,4 +3771,108 @@ export async function restoreKeyBackup(
   }
   const { offered, imported: taken } = imported
   return { offered, imported: taken }
+}
+
+/**
+ * Puts every message key this account holds into one file, encrypted under
+ * `passphrase`.
+ *
+ * This is the second route, for somebody with a reason to want no key
+ * material on a server at all. {@link createKeyBackup} is the first, and it
+ * is the one that covers the ordinary case; this one covers the person who
+ * has thought about it.
+ *
+ * What comes back is the whole file — the `-----BEGIN MEGOLM SESSION
+ * DATA-----` header, the body, the footer. **This library does not write
+ * it.** Where a file goes is a question about a share sheet, a downloads
+ * folder or an iCloud Drive directory, and this library has no business
+ * answering it — the same rule that keeps every HTTP request on your side of
+ * the line.
+ *
+ * What you owe in exchange is the discipline that comes with a plaintext
+ * secret: the string is every key this account holds, so it belongs in a
+ * file and then nowhere. Not a log, not a variable that outlives the save.
+ *
+ * # Two things this is not
+ *
+ * **Not the recovery route, and not this library's own format.** `MEGOLM
+ * SESSION DATA` is what Element writes and reads, so a file made here opens
+ * there and one made there opens here. A vault only one application can open
+ * is a vault that locks somebody into that application — the reason
+ * {@link exportSecrets} refuses to exist.
+ *
+ * **Not a data export.** A vault holds *keys*; an export holds *messages*.
+ * Somebody handed one of these has not received their data, they have
+ * received the means to read it, and the two do not answer the same
+ * question.
+ *
+ * # It takes a noticeable moment, by design
+ *
+ * The key is derived from the passphrase over half a million PBKDF2
+ * iterations, which is the point rather than an inefficiency: the same work
+ * is what makes a guess expensive for somebody who has the file. Show that
+ * something is happening.
+ *
+ * Rejects with kind `'not_initialised'` before a crypto machine exists.
+ * A device holding no keys yet produces a valid, empty vault rather than
+ * failing — a true statement about that device. Read
+ * {@link getKeyBackupState}'s `total` first if you want to say "there is
+ * nothing to export" instead of offering.
+ */
+export async function createKeyVault(passphrase: string): Promise<string> {
+  try {
+    return await nativeCreateKeyVault(passphrase)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Opens a vault with `passphrase` and imports the keys it holds.
+ *
+ * `vault` is the whole file as text, headers included, from this application
+ * or from any other Matrix client.
+ *
+ * `imported` below `offered` is not a failure: a key this device already
+ * holds a better copy of — one reaching further back into the conversation —
+ * is kept in preference to the one in the file. Both zero is an empty vault.
+ *
+ * # Two rejections, and they need different sentences
+ *
+ * `'wrong_passphrase'` means the file did not open. **Two causes and one
+ * answer**: the passphrase is wrong, or the file has been altered since it
+ * was written. The format's MAC is computed over its ciphertext under a key
+ * derived from the passphrase, so nothing can tell the two apart, and a
+ * product's wording has to cover both — check the passphrase, and if it is
+ * certainly right, the file is not the file it was.
+ *
+ * That the check exists at all is worth knowing: a vault that has been
+ * tampered with **fails to open**, rather than opening onto keys somebody
+ * else chose. The server backup's algorithm cannot make that promise, which
+ * is why {@link createKeyBackup} is careful about it and this is not.
+ *
+ * `'malformed_payload'` means what you passed is not a vault — bad headers,
+ * a version this build does not implement, or bytes that are not base64.
+ * Nothing was decrypted, so it says nothing about the passphrase, and
+ * telling somebody to check theirs would send them after a mistake they did
+ * not make.
+ *
+ * # This enables nothing
+ *
+ * A device that opens a vault and also wants its homeserver to keep a copy
+ * still calls {@link enableKeyBackup}. The keys that arrived go up on the
+ * next drain like any other.
+ */
+export async function openKeyVault(
+  vault: string,
+  passphrase: string,
+): Promise<BackupImport> {
+  let opened
+  try {
+    opened = await nativeOpenKeyVault(vault, passphrase)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+  const { offered, imported } = opened
+  return { offered, imported }
 }
