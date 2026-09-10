@@ -16,6 +16,23 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.6.1
+
+### Added
+
+- `CHANGELOG.md` now ships inside the published tarball. Until this release it
+  existed only in the repository, so somebody reading the package they had
+  actually installed could not see what any version changed without going to
+  GitHub for it.
+
+### Unchanged, and worth saying
+
+- **No code changed.** The TypeScript surface, the Rust core and the native
+  binaries in this tarball are built from the same sources as 0.6.0. Nothing
+  here fixes a bug or adds behaviour, and somebody already on 0.6.0 gains
+  nothing but the file named above. It is a packaging release, said plainly
+  rather than dressed up as more.
+
 ## 0.6.0
 
 ### Added
