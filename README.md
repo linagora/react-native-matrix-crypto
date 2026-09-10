@@ -20,6 +20,7 @@ It exposes [`matrix-sdk-crypto`](https://github.com/matrix-org/matrix-rust-sdk/t
 - [Creating this account's signing identity](#creating-this-accounts-signing-identity)
 - [Joining an identity from a second device](#joining-an-identity-from-a-second-device)
 - [Verifying a device](#verifying-a-device)
+- [Backing up the keys to your homeserver](#backing-up-the-keys-to-your-homeserver)
 - [Putting a file in a conversation](#putting-a-file-in-a-conversation)
 - [Limits you must design around](#limits-you-must-design-around)
 - [What works today](#what-works-today)
@@ -559,6 +560,53 @@ if (offer !== null) {
 
 [MSC4268]: https://github.com/matrix-org/matrix-spec-proposals/pull/4268
 
+## Backing up the keys to your homeserver
+
+Message keys live in the crypto store and nowhere else. A device that loses its store loses every message it had already received, for good — not a cache, the only copy. `createRecovery` brings an _identity_ back and says so in as many words; this is the other half, and it brings the keys.
+
+The mechanism is Matrix's own [server-side key backup]: each key is encrypted to a public key and uploaded, so the homeserver stores something it cannot read, and the private half is what opens it again.
+
+### Setting one up
+
+Four calls, with two requests of your own in between.
+
+1. **`createKeyBackup()`.** Synchronous, needs no crypto machine, and **nothing has happened when it returns** — so you may show what it produced, and let your user refuse it, before committing to anything. It hands back a `restoreKey` to show once, a `sealingKey` to keep, and a `versionRequest` to publish.
+2. **`POST /_matrix/client/v3/room_keys/version`** with `versionRequest`, sent as it is. The homeserver answers with a `version`.
+3. **`enableKeyBackup(sealingKey, version)`.**
+4. **Drain the pump.** `room_key_backup` requests appear from the next drain, in batches, and `getKeyBackupState` reports the progress as `backedUp` climbing towards `total`.
+
+**Step 3 is on every launch, not just this one.** This library persists neither value, so keep `sealingKey` and `version` wherever your product keeps device-scoped state and hand them back each time you build the machine. A process that skips it backs nothing up and says nothing about it.
+
+The `room_key_backup` request goes to `PUT /_matrix/client/v3/room_keys/keys?version={version}`, and the version for that query string is `body.version` — the third of the pump's disclosed exceptions, where a URL value travels inside the body because the library has no other way to hand it over.
+
+**The version is an opaque string.** Synapse answers with a counter from `"1"` and Continuwuity with a six-digit integer; the specification makes it opaque, and a client that assumes the first shape breaks against the second. Never parse it, never compare it for order, never generate one.
+
+### Restoring
+
+**Ask `restoreKeyMatches(restoreKey, versionInfo)` first**, with what `GET /room_keys/version` answered. The version description is a few hundred bytes and the backup is every key an account ever held, so a wrong key found there costs one small request and found afterwards costs the download. It is synchronous and needs no machine.
+
+Then download `GET /room_keys/keys?version={version}` and hand it to `restoreKeyBackup(restoreKey, version, keys)`. It reports `offered` and `imported`; a key that will not decrypt is skipped rather than failing the restore, because one damaged entry in a backup of thousands must not cost somebody the other thousands. `wrong_key` means nothing at all decrypted, which is a different secret rather than a typo.
+
+Restoring **enables nothing**. Call `enableKeyBackup` afterwards if this device should also keep the backup up to date.
+
+What comes back is _readability_, not a message store. This library holds keys; what they open is whatever ciphertext you still have.
+
+### What this mechanism does not promise
+
+**`m.megolm_backup.v1.curve25519-aes-sha2` does not authenticate its ciphertext.** Whoever can write to a backup — the account, or the homeserver — can substitute keys in it undetectably, and a device restoring would decrypt what they chose. `vodozemac` says so in the plainest way a library can: the algorithm sits behind a feature flag named `insecure-pk-encryption`.
+
+It is the only server-side backup Matrix has, so the choice is this or none. The obligation it creates is that your product says so, rather than letting "end-to-end encrypted" imply the homeserver is merely a blind store.
+
+**The private half never touches the store.** Upstream offers to keep it there and this library does not call that. What a device needs in order to keep _writing_ is the sealing key; the restore key is needed only to restore. The cost is real and is not a defect to be fixed later: this device cannot gossip the key to another device of the same account, because it does not have it. A second device restores from the restore key like any other.
+
+### Two secrets, and they are not the same one
+
+`createRecovery` returns a `recoveryKey` and `createKeyBackup` returns a `restoreKey`. Both are 32 random bytes in base58 and they are otherwise unrelated: the first opens this account's private signing keys, the second opens this backup's message keys, and neither opens what the other opens.
+
+A product with only one of them may call it whatever its users will understand. **A product with both must not call them the same thing**, or a support conversation ends with somebody pasting a key that cannot work into a field that cannot say why.
+
+[server-side key backup]: https://spec.matrix.org/v1.11/client-server-api/#server-side-key-backups
+
 ## Putting a file in a conversation
 
 A photograph, a recording, a document. Matrix encrypts attachments separately from the events that reference them: the file is encrypted with its own key, uploaded as ordinary bytes, and the key travels inside the event, which your conversation's own encryption already protects.
@@ -642,6 +690,7 @@ await shareScopeKey(scope, await yourRemainingMembers(scope))
 | Sender authenticity, per event                                                               | **provided at the end of a chain, not by a call.** Seven steps: hold a signing identity, publish it, have the sender publish and sign theirs, fetch their keys, complete a comparison, upload the signature it produces, and fetch their keys again. Omitting the last step is silent and leaves every event reading `unverified_identity`                                                                                                                                                                                                                                                                                                                                                                 |
 | A per-call gate on who may decrypt to you                                                    | **new to this release, opt in, off by default.** `decryptEvent` takes a `senderTrustRequirement`; the two tightened tiers refuse events from devices no identity vouches for, as their own error kind `sender_not_trusted`. Refusing _unauthenticated_ senders is what a product can now ask for by construction; a sender the product itself has _verified_ is still the seven-step chain above, which the requirement neither shortens nor replaces                                                                                                                                                                                                                                                      |
 | Surviving a reinstall                                                                        | working, through `createRecovery` and `recoverIdentity`: the account's private signing keys are stored encrypted in its own account data under a passphrase, and a device that has lost its store restores them and is the same identity it was. Proven end to end against a real store. `createRecovery` refuses to write over a recovery the account already has, including one another Matrix client wrote. The two account data requests are your product's, because this library performs none                                                                                                                                                                                                        |
+| Backing up message keys to the homeserver                                                    | **new to this release.** `createKeyBackup`, `enableKeyBackup`, `getKeyBackupState`, `restoreKeyMatches`, `restoreKeyBackup`, `disableKeyBackup`, with the upload travelling as an eighth pump kind, `room_key_backup`. Proven end to end in one process: the batch leaves through the pump, the acknowledgement advances the counts, and the ciphertext opens under the key that was handed out for it and refuses another one. The algorithm does not authenticate its ciphertext — see the section above for what that means and why it is still the only option                                                                                                                                         |
 | Secret export and import                                                                     | **not implemented, and not coming.** `exportSecrets` and `importSecrets` would need a `Uint8Array` container that Matrix does not define, so it would be a format this library invented and no other client could read. `createRecovery` delivers the interoperable form instead; the [design notes](DESIGN-NOTES.md) say more                                                                                                                                                                                                                                                                                                                                                                             |
 
 The unimplemented functions exist today as final types that compile, and reject at runtime with a typed `not_implemented` error. That is intentional: a consuming team can build against the real shape while the cryptography underneath is written.
@@ -659,6 +708,10 @@ The unimplemented functions exist today as final types that compile, and reject 
 **When `verified` does arrive, it does not arrive retroactively.** Verifying someone changes what their next messages report, not what their old ones reported. The value belongs to the Megolm session an event was encrypted with, it is computed once when that session's key arrives, and it is never recomputed for a session whose sender had already been identified. A message decrypted while its sender was merely cross-signed keeps reading `unverified_identity` until that session is replaced, however thoroughly you verify them afterwards. Design for "from here on" and not for a badge that backfills a conversation.
 
 What `senderVerification` can also do is tell an ordinary unsigned device apart from `mismatched_sender`, which says the sender the event claims is not the owner of the session that encrypted it. Decryption succeeded and the `sender` field is still false. That is an impersonation signal and the one value here worth reacting to on its own. It is also a **snapshot taken at decryption time**: upstream defines it as the state of the sending device then, and tells callers who persist it to mark it dirty when `device_lists.changed` arrives down the sync, which you are already passing to `receiveSyncChanges`. Nothing re-derives a stored value for you.
+
+**The restore key is shown once and cannot be produced again either, and it is a different secret.** `createKeyBackup` returns it, nothing stores it, and no call brings it back — the same rule as the recovery key below and a different key with a different job. Do not present the two on the same screen, and do not accept one where the other belongs: `restoreKeyBackup` reports `wrong_key` for a well-formed key that opens a different backup, which is the only thing standing between a user and a support conversation about a typo that is not there.
+
+**Backing up is a device-scoped commitment your product renews, not a setting the library remembers.** `enableKeyBackup` takes the sealing key and the version on every launch. Nothing warns you if you stop calling it; `getKeyBackupState` reporting `enabled: false`, or `backedUp` frozen well below `total` on a device that has been draining and reporting its pump, is the signal.
 
 **The recovery key is shown once and cannot be produced again.** `createRecovery` returns it, nothing stores it, and no call brings it back. If your user loses it and forgets the passphrase, the account's identity is gone: nothing on the server can open the stored keys without one of the two, this library keeps no second copy, and the consequence is not only theirs. Every device they own has to be verified again, and so does every person who had verified them. That is the whole security value of the mechanism and the whole support burden of it, and a screen the user taps past is where the burden starts.
 
@@ -694,7 +747,7 @@ How this library was built, what the measurements do and do not establish, and t
 
 ## Roadmap
 
-**The current release is 0.6.0.** It lets a product put a file in a conversation: `encryptAttachment` and `decryptAttachment` expose the attachment encryption the history bundle already used inside itself, so a product uploads and downloads bytes and never writes AES or SHA-256 in JavaScript. 0.5.0 before it gave a conversation a past and a way out of one: [MSC4268] room key bundles hand somebody you invite what was said before they arrived, encrypted by this library rather than by your product, and `discardScopeKey` rotates a scope's key so that removing a person stops them reading on. That sits on top of the two trust decisions 0.4.0 made the product's, device verification by a scannable code in all three modes the protocol defines, with showing and scanning announced separately, encryption and decryption, short-string verification, cross-signing identities and recovery through server-side secret storage. The npm badge at the top of this file always names the version actually published; this sentence names what the tree it points at contains.
+**The current release is 0.7.0.** It lets a product survive a lost telephone: `createKeyBackup`, `enableKeyBackup` and `restoreKeyBackup` put this account's message keys on its own homeserver, encrypted to a key the homeserver never holds, and the upload travels as an eighth pump kind rather than down a second path with rules of its own. The section above is the one to read before shipping it, because the algorithm Matrix specifies here does not authenticate its ciphertext and a product owes its users that sentence. 0.6.0 before it let a product put a file in a conversation: `encryptAttachment` and `decryptAttachment` expose the attachment encryption the history bundle already used inside itself, so a product uploads and downloads bytes and never writes AES or SHA-256 in JavaScript. 0.5.0 before it gave a conversation a past and a way out of one: [MSC4268] room key bundles hand somebody you invite what was said before they arrived, encrypted by this library rather than by your product, and `discardScopeKey` rotates a scope's key so that removing a person stops them reading on. That sits on top of the two trust decisions 0.4.0 made the product's, device verification by a scannable code in all three modes the protocol defines, with showing and scanning announced separately, encryption and decryption, short-string verification, cross-signing identities and recovery through server-side secret storage. The npm badge at the top of this file always names the version actually published; this sentence names what the tree it points at contains.
 
 **Everything this library set out to do is built.** The table above is the authority on what each capability does and does not promise; the design notes are the history behind it, and you do not need either to use the library.
 

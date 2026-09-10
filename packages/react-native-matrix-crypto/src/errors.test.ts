@@ -4,6 +4,9 @@ import { isCryptoError, toCryptoError } from './errors'
 // bottom of this file has to enumerate what the bindings really declare, or
 // it is a hand-written list wearing a derivation's clothes.
 import {
+  AttachmentFfiError_Tags,
+  BackupFfiError_Tags,
+  HistoryFfiError_Tags,
   MachineFfiError_Tags,
   ProbeFfiError_Tags,
   SessionFfiError_Tags,
@@ -482,10 +485,24 @@ describe('toCryptoError for the verification kinds', () => {
  * declaration, so walking them covers exactly the same set.
  */
 describe('every generated error variant maps to a kind of its own', () => {
+  // Every error enum the bindings generate, and it took three releases to
+  // be that. `HistoryFfiError` and `AttachmentFfiError` were generated and
+  // never listed here, so seven and three variants respectively went
+  // unwalked while the comment above said this list grows with the Rust
+  // surface -- it grows with the Rust surface *and* somebody remembering,
+  // which is exactly what it claims not to need. The two are added in the
+  // change that adds `BackupFfiError`, because listing only the new one
+  // would have left the same rot with a fresher example in it.
+  //
+  // A list is still what this is, and it can still be forgotten. What makes
+  // that survivable is the pinned count below: a new enum leaves it wrong.
   const GENERATED: ReadonlyArray<readonly [string, Record<string, string>]> = [
     ['MachineFfiError', MachineFfiError_Tags],
     ['SessionFfiError', SessionFfiError_Tags],
     ['ProbeFfiError', ProbeFfiError_Tags],
+    ['HistoryFfiError', HistoryFfiError_Tags],
+    ['AttachmentFfiError', AttachmentFfiError_Tags],
+    ['BackupFfiError', BackupFfiError_Tags],
   ]
 
   /**
@@ -496,7 +513,7 @@ describe('every generated error variant maps to a kind of its own', () => {
    * grows a variant this number changes here, deliberately, in the same
    * change that adds the mapping.
    */
-  const EXPECTED_VARIANTS = 37
+  const EXPECTED_VARIANTS = 52
 
   it('refuses to pass having walked nothing', () => {
     for (const [name, tags] of GENERATED) {

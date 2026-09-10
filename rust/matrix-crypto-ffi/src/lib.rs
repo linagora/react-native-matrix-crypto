@@ -1838,3 +1838,185 @@ pub async fn decrypt_attachment(
         .await
         .map_err(Into::into)
 }
+
+/// The wire mirror of `matrix_crypto_core::BackupError`.
+///
+/// A new enum rather than a fold into an existing one, for the reason
+/// `HistoryFfiError` above states in full: variants of an FFI enum carry
+/// ordinals the generated bindings reproduce as `case N`, so a separate
+/// surface gets a separate enum and constrains nothing already shipped. The
+/// kind no other error here has -- `WrongKey` -- belongs to key backup
+/// alone.
+#[derive(Debug, uniffi::Error, thiserror::Error)]
+pub enum BackupFfiError {
+    #[error("an identifier could not be parsed")]
+    MalformedIdentifier,
+    #[error("the payload could not be parsed")]
+    MalformedPayload,
+    #[error("no crypto machine has been created")]
+    NotInitialised,
+    #[error("the crypto operation failed")]
+    Failed,
+    #[error("that key does not open this backup")]
+    WrongKey,
+}
+
+impl From<matrix_crypto_core::BackupError> for BackupFfiError {
+    fn from(error: matrix_crypto_core::BackupError) -> Self {
+        use matrix_crypto_core::BackupError as Core;
+        match error {
+            Core::MalformedIdentifier => BackupFfiError::MalformedIdentifier,
+            Core::MalformedPayload => BackupFfiError::MalformedPayload,
+            Core::NotInitialised => BackupFfiError::NotInitialised,
+            Core::Failed => BackupFfiError::Failed,
+            Core::WrongKey => BackupFfiError::WrongKey,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::BackupSetup`.
+///
+/// **No `Debug` derive**, for the reason `RecoverySetup` above gives and the
+/// core type repeats: `restore_key` opens every key this backup will ever
+/// hold.
+#[derive(uniffi::Record)]
+pub struct BackupSetup {
+    pub restore_key: String,
+    pub sealing_key: String,
+    pub version_request: String,
+}
+
+impl From<matrix_crypto_core::BackupSetup> for BackupSetup {
+    fn from(setup: matrix_crypto_core::BackupSetup) -> Self {
+        // Destructured rather than field-accessed, so a field the core type
+        // grows later fails this to compile instead of being dropped
+        // silently on its way across the boundary -- the shape
+        // `AccountDataEntry`'s own conversions above already use.
+        let matrix_crypto_core::BackupSetup {
+            restore_key,
+            sealing_key,
+            version_request,
+        } = setup;
+        BackupSetup {
+            restore_key,
+            sealing_key,
+            version_request,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::BackupState`.
+#[derive(Debug, uniffi::Record)]
+pub struct BackupState {
+    pub enabled: bool,
+    pub version: Option<String>,
+    pub total: u32,
+    pub backed_up: u32,
+}
+
+impl From<matrix_crypto_core::BackupState> for BackupState {
+    fn from(state: matrix_crypto_core::BackupState) -> Self {
+        let matrix_crypto_core::BackupState {
+            enabled,
+            version,
+            total,
+            backed_up,
+        } = state;
+        BackupState {
+            enabled,
+            version,
+            total,
+            backed_up,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::BackupImport`.
+#[derive(Debug, uniffi::Record)]
+pub struct BackupImport {
+    pub offered: u32,
+    pub imported: u32,
+}
+
+impl From<matrix_crypto_core::BackupImport> for BackupImport {
+    fn from(report: matrix_crypto_core::BackupImport) -> Self {
+        let matrix_crypto_core::BackupImport { offered, imported } = report;
+        BackupImport { offered, imported }
+    }
+}
+
+/// Generates a backup key and describes the version to publish with it.
+/// Mirrors `create_backup`; see its own doc comment in
+/// `matrix-crypto-core::backup`, and that module's own, for why nothing has
+/// happened when this returns, why the private half is never stored, and why
+/// the secret it hands back is not the recovery key `create_recovery`
+/// produces.
+///
+/// Infallible and takes no machine, which is the core function's shape
+/// exactly: generating a key is arithmetic on 32 random bytes.
+#[uniffi::export]
+pub fn create_backup() -> BackupSetup {
+    matrix_crypto_core::create_backup().into()
+}
+
+/// Starts backing up to `version` under `sealing_key`. Mirrors
+/// `enable_backup`; see its own doc comment for why both arguments come back
+/// on every launch and why an empty version is refused rather than quietly
+/// doing nothing.
+#[uniffi::export]
+pub async fn enable_backup(sealing_key: String, version: String) -> Result<(), BackupFfiError> {
+    matrix_crypto_core::enable_backup(&sealing_key, &version)
+        .await
+        .map_err(Into::into)
+}
+
+/// Stops backing up and forgets which keys were already backed up. Mirrors
+/// `disable_backup`; see its own doc comment for why this is a local act with
+/// no protocol meaning, and what re-enabling then costs.
+#[uniffi::export]
+pub async fn disable_backup() -> Result<(), BackupFfiError> {
+    matrix_crypto_core::disable_backup()
+        .await
+        .map_err(Into::into)
+}
+
+/// What this device is doing about backup, and how far along it is. Mirrors
+/// `backup_state`.
+#[uniffi::export]
+pub async fn backup_state() -> Result<BackupState, BackupFfiError> {
+    matrix_crypto_core::backup_state()
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+/// Whether `restore_key` opens the backup `version_info` describes. Mirrors
+/// `restore_key_matches`; see its own doc comment for why asking this before
+/// downloading is the difference between one small request and the whole
+/// backup.
+///
+/// Infallible in the machine sense and takes none: it compares two public
+/// keys.
+#[uniffi::export]
+pub fn restore_key_matches(
+    restore_key: String,
+    version_info: String,
+) -> Result<bool, BackupFfiError> {
+    matrix_crypto_core::restore_key_matches(&restore_key, &version_info).map_err(Into::into)
+}
+
+/// Decrypts a downloaded backup and imports what it holds. Mirrors
+/// `restore_backup`; see its own doc comment for why `version` is recorded
+/// rather than checked, why an entry that will not decrypt is skipped rather
+/// than failing the restore, and why this enables nothing.
+#[uniffi::export]
+pub async fn restore_backup(
+    restore_key: String,
+    version: String,
+    keys: String,
+) -> Result<BackupImport, BackupFfiError> {
+    matrix_crypto_core::restore_backup(&restore_key, &version, &keys)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}

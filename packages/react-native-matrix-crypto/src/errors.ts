@@ -81,6 +81,17 @@ export type CryptoErrorKind =
   // An identifier this library was handed did not parse: a `CryptoScopeId`
   // (which `asCryptoScopeId` never validates), a user id, a device id.
   | 'malformed_identifier'
+  // ---- key backup --------------------------------------------------------
+  // The restore key handed to `restoreKeyBackup` is a real backup key and
+  // not this backup's. Kept apart from 'malformed_identifier', which is the
+  // key not being a key at all, because the two want opposite things said:
+  // one is a typo to correct, the other is the wrong secret entirely -- the
+  // key to a backup that was replaced, or `createRecovery`'s recovery key,
+  // which is a different secret with the same shape.
+  //
+  // Deliberately absent from RETRIABLE below: the same key opens the same
+  // backup exactly as many times as it did the first time, which is none.
+  | 'wrong_key'
   // ---- verification ------------------------------------------------------
   // The first three cross the FFI boundary; the three after them are
   // synthesised in this file's `toCryptoError` or in facade.ts, the same way
@@ -336,6 +347,28 @@ export type CryptoErrorKind =
   // the same bytes fail the same way, though downloading them again is a
   // reasonable thing for a product to do once.
   | 'bundle_unreadable'
+  // ---- attachments -------------------------------------------------------
+  // The bytes `decryptAttachment` was handed are not the bytes its secret
+  // announced: Matrix's attachment encryption carries a SHA-256 of the
+  // ciphertext in the secret, and this is that check failing -- a download
+  // that was truncated, corrupted, or substituted.
+  //
+  // 'bundle_unreadable' above is the same shape of fault one surface over,
+  // and they are kept apart rather than folded because each names what the
+  // caller was actually handling and a product's sentence for the two is
+  // about different things. What they share is the rule that matters: do not
+  // show what decrypted before the check ran.
+  //
+  // **Both of the attachment surface's own kinds arrived late**, and the way
+  // they arrived is the point. `AttachmentFfiError` was generated and never
+  // listed in `errors.test.ts`'s walk over the tag enums, so its variants
+  // reached products as kind 'unknown' with the message "crypto error:
+  // unknown" for three releases -- the exact failure that walk exists to
+  // prevent, sitting inside its own blind spot. Listing every generated
+  // enum, which the key-backup change did, is what found it. Absent from
+  // RETRIABLE: the same bytes fail the same way, though downloading them
+  // again is a reasonable thing for a product to do once.
+  | 'not_what_was_announced'
   | 'not_implemented'
   | 'not_initialised'
   | 'already_initialised'
@@ -431,7 +464,19 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // knob a developer could turn.
   ['SenderNotTrusted', 'sender_not_trusted'],
   ['NoOffer', 'no_offer'],
+  // `BackupFfiError`'s one kind that no other enum has. Its four others --
+  // `MalformedIdentifier`, `MalformedPayload`, `NotInitialised`, `Failed` --
+  // were already served by the entries around this map, since it is keyed on
+  // the variant name alone.
+  ['WrongKey', 'wrong_key'],
   ['BundleUnreadable', 'bundle_unreadable'],
+  // `AttachmentFfiError`'s two. `MalformedSecret` is a secret that is not
+  // one this library produced, which is the same fault and the same remedy
+  // as `HistoryFfiError::MalformedPayload` -- the opaque secret handed back
+  // to `shareHistoryBundle` -- so it lands on the same kind. Its `Failed`
+  // was already served, as every enum's is.
+  ['MalformedSecret', 'malformed_payload'],
+  ['NotWhatWasAnnounced', 'not_what_was_announced'],
   ['Undecryptable', 'undecryptable'],
   // The remaining three `SessionFfiError` variants (Task 7): `raw_json`
   // that did not parse, an upstream crypto operation that failed for a
