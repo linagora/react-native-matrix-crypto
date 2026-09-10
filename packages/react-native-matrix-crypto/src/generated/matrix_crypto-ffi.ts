@@ -191,6 +191,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_accept_verification(
     verificationId: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_backup_state(): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_bootstrap_identity(): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_build_history_bundle(
     scope: Uint8Array
@@ -207,6 +208,9 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_confirm_verification(
     verificationId: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_create_backup(
+    uniffi_out_err: UniffiRustCallStatus
+  ): Uint8Array;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_create_crypto_machine(
     config: Uint8Array
   ): bigint;
@@ -231,8 +235,13 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_fn_func_device_statuses(
     userId: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_disable_backup(): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_discard_scope_key(
     scope: Uint8Array
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_enable_backup(
+    sealingKey: Uint8Array,
+    version: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_encrypt_attachment(
     plaintext: Uint8Array
@@ -288,6 +297,16 @@ interface NativeModuleInterface {
     userId: Uint8Array,
     deviceId: Uint8Array
   ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_restore_backup(
+    restoreKey: Uint8Array,
+    version: Uint8Array,
+    keys: Uint8Array
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_restore_key_matches(
+    restoreKey: Uint8Array,
+    versionInfo: Uint8Array,
+    uniffi_out_err: UniffiRustCallStatus
+  ): number;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_set_crypto_observer(
     observer: bigint,
     uniffi_out_err: UniffiRustCallStatus
@@ -331,12 +350,14 @@ interface NativeModuleInterface {
   ): void;
   ubrn_ffi_matrix_crypto_ffi_uniffi_contract_version(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_accept_verification(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_backup_state(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_bootstrap_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_cancel_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_clear_crypto_observer(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_confirm_scan(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_confirm_verification(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_backup(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_crypto_machine(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_recovery(): number;
@@ -344,7 +365,9 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_identity_keys(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_device_statuses(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_disable_backup(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_enable_backup(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_identity_status(): number;
@@ -360,6 +383,8 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_recover_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_request_self_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_request_verification(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_restore_backup(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_restore_key_matches(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_set_crypto_observer(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_share_scope_key(): number;

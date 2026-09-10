@@ -5,6 +5,7 @@
 //! enforces that in CI.
 
 mod attachment;
+mod backup;
 mod error;
 mod history;
 mod identity;
@@ -18,6 +19,10 @@ mod signing;
 mod verification;
 
 pub use attachment::{decrypt_attachment, encrypt_attachment, AttachmentError, SealedAttachment};
+pub use backup::{
+    backup_state, create_backup, disable_backup, enable_backup, restore_backup,
+    restore_key_matches, BackupError, BackupImport, BackupSetup, BackupState,
+};
 pub use error::ProbeError;
 pub use history::{
     build_history_bundle, offered_history_bundle, receive_history_bundle, share_history_bundle,

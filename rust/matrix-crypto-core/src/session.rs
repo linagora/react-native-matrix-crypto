@@ -18,12 +18,20 @@ use std::sync::Mutex as StdMutex;
 use matrix_sdk_common::deserialized_responses::{
     DeviceLinkProblem, VerificationLevel, VerificationState, WithheldCode,
 };
-// Response types for the six kinds `OlmMachine::outgoing_requests` and
-// `share_room_key` can ever hand out (matched exhaustively against
-// `AnyOutgoingRequest` below, with no wildcard -- see `describe_outgoing`).
-// Each is renamed on import: their upstream names collide with either one
-// another (every endpoint module calls its own type `Response`) or with this
-// module's own public `OutgoingRequest`.
+// Response types for the kinds this module hands out. Each is renamed on
+// import: their upstream names collide with either one another (every
+// endpoint module calls its own type `Response`) or with this module's own
+// public `OutgoingRequest`.
+//
+// **The first of them is the odd one out, and it sorts to the front rather
+// than reading like one of the six that follow.** Its request never comes
+// from `OlmMachine::outgoing_requests`: the backup machine builds one on
+// demand out of whatever is not backed up yet, which is what
+// `PendingKind::RoomKeyBackup` is about. The six after it are the kinds
+// `outgoing_requests` and `share_room_key` can hand out, matched
+// exhaustively against `AnyOutgoingRequest` below with no wildcard -- see
+// `describe_outgoing`.
+use matrix_sdk_common::ruma::api::client::backup::add_backup_keys::v3::Response as KeysBackupResponse;
 use matrix_sdk_common::ruma::api::client::keys::claim_keys::v3::{
     Request as KeysClaimRequest, Response as KeysClaimResponse,
 };
@@ -31,9 +39,13 @@ use matrix_sdk_common::ruma::api::client::keys::get_keys::v3::Response as KeysQu
 use matrix_sdk_common::ruma::api::client::keys::upload_keys::v3::Response as KeysUploadResponse;
 use matrix_sdk_common::ruma::api::client::keys::upload_signatures::v3::Response as SignatureUploadResponse;
 // The seventh response type, reached through `ruma` directly: unlike the six
-// above it is not re-exported by `matrix_sdk_crypto::types::requests`, which
-// imports it privately for `AnyIncomingResponse`'s own declaration and stops
-// there.
+// kinds `AnyOutgoingRequest` covers, it is not re-exported by
+// `matrix_sdk_crypto::types::requests`, which imports it privately for
+// `AnyIncomingResponse`'s own declaration and stops there. `KeysBackupResponse`
+// at the top of this block is reached the same way and for the same reason,
+// so "the six" is the set that is re-exported and not the set above this
+// line -- which it was, for one release, until the eighth kind landed above
+// it and quietly made the sentence false.
 use matrix_sdk_common::ruma::api::client::keys::upload_signing_keys::v3::Response as SigningKeysUploadResponse;
 use matrix_sdk_common::ruma::api::client::message::send_message_event::v3::Response as RoomMessageResponse;
 use matrix_sdk_common::ruma::api::client::sync::sync_events::DeviceLists;
@@ -56,7 +68,7 @@ use matrix_sdk_crypto::types::events::room::encrypted::EncryptedEvent;
 // type of the same name, and the upstream one is only ever held, never
 // exposed.
 use matrix_sdk_crypto::types::requests::{
-    AnyIncomingResponse, AnyOutgoingRequest, KeysQueryRequest,
+    AnyIncomingResponse, AnyOutgoingRequest, KeysBackupRequest, KeysQueryRequest,
     OutgoingRequest as UpstreamOutgoingRequest, ToDeviceRequest, UploadSigningKeysRequest,
 };
 // Upstream's own wrapper for a cross-signing key marked as a master key.
@@ -1692,6 +1704,27 @@ enum PendingKind {
     /// own queue slot, its own hand-serialised body
     /// ([`describe_signing_keys`]), and its own arm in [`mark_sent`].
     SigningKeysUpload,
+    /// `PUT /_matrix/client/v3/room_keys/keys`, the fourth request class.
+    ///
+    /// Neither a reaction request upstream queues for itself nor an action
+    /// request it hands back to its caller, and not
+    /// [`SigningKeysUpload`](Self::SigningKeysUpload)'s class either: this
+    /// one is *asked for*. `BackupMachine::backup` builds it on demand out
+    /// of whatever this device holds that the enabled backup has no copy
+    /// of, and `outgoing_requests` neither knows nor mentions it.
+    ///
+    /// So it has no queue slot in [`RequestState`]. Upstream keeps the slot
+    /// -- one `pending_backup`, handed back unchanged until it is marked
+    /// sent -- and [`take_outgoing_requests`] asks for it each drain, which
+    /// is what makes "the backup runs at the end of every sync cycle" true
+    /// by construction rather than by a caller remembering to ask.
+    ///
+    /// **Asked for only when a backup is enabled**, and that guard is not
+    /// only about cost. Upstream's `backup_helper` answers a disabled
+    /// machine with `Ok(None)` *and a `warn!`*, so draining a pump on a
+    /// device that has never set up a backup -- which is most of them --
+    /// would write a warning per sync for ever.
+    RoomKeyBackup,
 }
 
 impl PendingKind {
@@ -1715,6 +1748,7 @@ impl PendingKind {
             PendingKind::SignatureUpload => "signature_upload",
             PendingKind::RoomMessage => "room_message",
             PendingKind::SigningKeysUpload => "signing_keys_upload",
+            PendingKind::RoomKeyBackup => "room_key_backup",
         }
     }
 
@@ -1754,6 +1788,12 @@ impl PendingKind {
             PendingKind::KeysClaim => &["failures", "one_time_keys"],
             PendingKind::SignatureUpload => &["failures"],
             PendingKind::RoomMessage => &["event_id"],
+            // Both mandatory upstream -- neither is `#[serde(default)]` --
+            // so ruma's own parse already refuses a body missing them, and
+            // this list is the belt to that pair of braces: the one body
+            // ruma accepts and this rule does not is an object carrying
+            // `etag` and `count` and nothing else, which is a real success.
+            PendingKind::RoomKeyBackup => &["etag", "count"],
             PendingKind::ToDevice | PendingKind::SigningKeysUpload => &[],
         }
     }
@@ -1884,10 +1924,19 @@ impl PendingKind {
             // they were written when every `keys_query` was evictable and
             // nothing re-read them; if this arm changes again, they are the
             // two places that go stale with it.
+            //
+            // `RoomKeyBackup` is here for a third reason again, and it is
+            // that nothing can supersede it: upstream mints one id for one
+            // pending backup and hands that same request back on every
+            // drain until it is marked sent, so a batch never carries two,
+            // and a re-offered one arrives under the id it already has.
+            // `pending` therefore cannot grow, which is the only thing an
+            // eviction group exists to prevent.
             PendingKind::ToDevice
             | PendingKind::SignatureUpload
             | PendingKind::RoomMessage
-            | PendingKind::PeerKeysQueryOutOfBand => None,
+            | PendingKind::PeerKeysQueryOutOfBand
+            | PendingKind::RoomKeyBackup => None,
         }
     }
 }
@@ -2409,6 +2458,34 @@ fn describe_signing_keys(r: &UploadSigningKeysRequest) -> Result<String, Session
     Ok(serde_json::Value::Object(body).to_string())
 }
 
+/// The eighth kind's wire body: `rooms`, and `version` alongside it.
+///
+/// The third disclosed exception to [`describe_outgoing`]'s "each body is
+/// exactly that endpoint's real wire body", and the only one where the extra
+/// value is a *query* parameter rather than a path segment. `PUT
+/// /_matrix/client/v3/room_keys/keys` takes its version as `?version=`,
+/// which no field of the wire body carries and which the product has no
+/// other way to obtain from this crate -- the argument that function makes
+/// for `to_device` and `room_message`, whose extra fields are ruma's own
+/// `#[ruma_api(path)]` values. An extra top-level JSON field is harmless to
+/// a server that ignores unknown keys.
+///
+/// A separate function rather than an arm of [`describe_outgoing`], because
+/// `AnyOutgoingRequest` has no variant for this endpoint and never will:
+/// this request comes from the backup machine, not from the outgoing-request
+/// cache. Same shape and same reason as [`describe_signing_keys`].
+fn describe_backup(request: &KeysBackupRequest) -> Result<String, SessionError> {
+    let mut body = serde_json::Map::new();
+    // Destructured, not field-accessed: a field upstream adds later must
+    // fail this to compile rather than be silently dropped from a request
+    // whose whole purpose is to carry exactly these keys to exactly this
+    // version.
+    let KeysBackupRequest { version, rooms } = request;
+    body.insert("version".to_string(), to_json(version)?);
+    body.insert("rooms".to_string(), to_json(rooms)?);
+    Ok(serde_json::Value::Object(body).to_string())
+}
+
 /// Flattens one upstream outgoing request into the `{ kind, body }` shape
 /// that crosses the boundary, alongside the [`PendingKind`] needed to parse
 /// its eventual response.
@@ -2435,11 +2512,14 @@ fn describe_signing_keys(r: &UploadSigningKeysRequest) -> Result<String, Session
 /// a wrapper around it, which an earlier version of this function got
 /// wrong).
 ///
-/// `to_device` and `room_message` are the two disclosed exceptions:
-/// alongside their real body field(s), each also carries the values ruma
-/// marks `#[ruma_api(path)]` for that endpoint (`event_type`/`txn_id` for
-/// `to_device`; `room_id`/`event_type`/`txn_id` for `room_message`), which
-/// the real endpoint's URL needs and the wire body itself omits. The
+/// `to_device` and `room_message` are the two disclosed exceptions *this
+/// function* has: alongside their real body field(s), each also carries the
+/// values ruma marks `#[ruma_api(path)]` for that endpoint
+/// (`event_type`/`txn_id` for `to_device`; `room_id`/`event_type`/`txn_id`
+/// for `room_message`), which the real endpoint's URL needs and the wire
+/// body itself omits. There is a third on this crate's surface, in
+/// [`describe_backup`], which this function never sees because that request
+/// does not come from `AnyOutgoingRequest` at all. The
 /// product has no other way to obtain them from this crate, and an extra
 /// top-level JSON field is harmless to a server that ignores unknown keys.
 /// `room_message` previously omitted `event_type` here, which left the
@@ -2861,9 +2941,11 @@ impl std::fmt::Debug for OutgoingRequest {
 /// Drains every outstanding outbound request: device/one-time key uploads
 /// and key queries upstream still wants sent (`OlmMachine::outgoing_requests`),
 /// any to-device requests [`share_scope_key`] queued, any `/keys/claim`
-/// request it queued (design doc section 3ter), and every request a
+/// request it queued (design doc section 3ter), every request a
 /// verification flow handed back rather than queueing
-/// ([`queue_action_request`]).
+/// ([`queue_action_request`]), and -- once a backup is enabled -- the next
+/// batch of scope keys the homeserver has no copy of
+/// ([`PendingKind::RoomKeyBackup`]).
 ///
 /// This is the half of the pump the design doc section 3bis is named for.
 /// A fresh machine's device keys and one-time keys are otherwise never
@@ -2900,14 +2982,41 @@ pub async fn take_outgoing_requests() -> Result<Vec<OutgoingRequest>, SessionErr
     // config: it is what [`account_scoped`] below compares each key query's
     // user list against, and reading it from the machine that produced those
     // requests is the only way the two cannot disagree.
-    let (account, upstream) = with_machine(|machine| {
+    //
+    // The backup batch is asked for in the same trip, and only when a backup
+    // is enabled -- see `PendingKind::RoomKeyBackup` for why that guard is
+    // not merely about cost.
+    let (account, upstream, backup) = with_machine(|machine| {
         Box::pin(async move {
             let requests = machine.outgoing_requests().await;
-            (machine.user_id().to_owned(), requests)
+            let backup = if machine.backup_machine().enabled().await {
+                Some(machine.backup_machine().backup().await)
+            } else {
+                None
+            };
+            (machine.user_id().to_owned(), requests, backup)
         })
     })
     .await?;
     let upstream = upstream.map_err(|_upstream| SessionError::Failed)?;
+
+    // **A backup that cannot be assembled costs the backup, not the drain.**
+    //
+    // This propagated the store error at first, on the reading that
+    // swallowing it would leave a backup silently never progressing. That
+    // reading had the priority backwards. The requests in `upstream` are the
+    // ones the account depends on to work at all -- device keys, one-time
+    // keys, who else's devices exist -- and failing the whole call over the
+    // backup would stop a person receiving messages because tomorrow's copy
+    // of their keys could not be built. Sync is what a conversation depends
+    // on; a backup is what next week depends on.
+    //
+    // Silent is what it is not. `backup_state`'s two counts are how a
+    // product sees this: `backed_up` well below `total` on a device that has
+    // been draining and reporting its pump is a backup that is not
+    // progressing, and that function's own doc comment says so. The next
+    // drain asks again, so a transient failure costs one cycle.
+    let backup = backup.and_then(|batch| batch.ok()).flatten();
 
     // Every entry this call will hand out, built in full before
     // `state.pending` is touched: a serialisation failure partway through
@@ -2920,7 +3029,7 @@ pub async fn take_outgoing_requests() -> Result<Vec<OutgoingRequest>, SessionErr
     // else is learned of here, for the first time or again, and is stamped
     // below.
     let mut fresh: Vec<(Option<u64>, String, PendingKind, String)> =
-        Vec::with_capacity(upstream.len() + 2);
+        Vec::with_capacity(upstream.len() + 3);
 
     for request in &upstream {
         let id = request.request_id().to_string();
@@ -2930,6 +3039,18 @@ pub async fn take_outgoing_requests() -> Result<Vec<OutgoingRequest>, SessionErr
             id,
             account_scoped(kind, request.request(), &account),
             body,
+        ));
+    }
+
+    // Upstream's id, not one minted here: it is the id
+    // `backup_machine.mark_request_as_sent` will be looking for, and the
+    // same one comes back on every drain until this batch is resolved.
+    if let Some((txn_id, request)) = &backup {
+        fresh.push((
+            None,
+            txn_id.to_string(),
+            PendingKind::RoomKeyBackup,
+            describe_backup(request)?,
         ));
     }
 
@@ -3483,6 +3604,24 @@ async fn mark_sent(
                     &transaction_id,
                     AnyIncomingResponse::SigningKeysUpload(&response),
                 )
+                .await
+        }
+        // Upstream's own handling is `backup_machine.mark_request_as_sent`,
+        // which records how far the backup got and clears its pending slot
+        // so the next drain builds the next batch. Skip it and the same
+        // batch is offered for ever: the request goes out, the server takes
+        // it, and nothing ever progresses -- the shape of silent failure
+        // this pump exists to make impossible.
+        //
+        // The response body carries `count` and `etag` and upstream reads
+        // neither. It is still parsed rather than fabricated, for this
+        // function's own stated reason: not interpreting the JSON means not
+        // acting on its meaning, not skipping the deserialisation.
+        PendingKind::RoomKeyBackup => {
+            let response = KeysBackupResponse::try_from_http_response(http_response(body))
+                .map_err(|_| SessionError::MalformedPayload)?;
+            machine
+                .mark_request_as_sent(&transaction_id, &response)
                 .await
         }
     };

@@ -19,16 +19,20 @@ import {
   confirmScan,
   confirmVerification,
   createCryptoMachine,
+  createKeyBackup,
   buildHistoryBundle,
   createRecovery,
   decryptEvent,
+  disableKeyBackup,
   discardScopeKey,
+  enableKeyBackup,
   encryptEvent,
   encryptionSlice,
   exportSecrets,
   getDeviceIdentityKeys,
   getDeviceStatuses,
   getIdentityStatus,
+  getKeyBackupState,
   getVerificationCode,
   getVerificationMaterial,
   getVerificationStage,
@@ -42,6 +46,8 @@ import {
   receiveSyncChanges,
   recoverIdentity,
   restoreCryptoMachine,
+  restoreKeyBackup,
+  restoreKeyMatches,
   requestSelfVerification,
   requestVerification,
   shareHistoryBundle,
@@ -52,18 +58,23 @@ import {
 } from './facade'
 import {
   acceptVerification as nativeAcceptVerification,
+  backupState as nativeBackupState,
+  BackupFfiError,
   bootstrapIdentity as nativeBootstrapIdentity,
   cancelVerification as nativeCancelVerification,
   CryptoSignal as NativeCryptoSignal,
   confirmScan as nativeConfirmScan,
   confirmVerification as nativeConfirmVerification,
+  createBackup as nativeCreateBackup,
   createCryptoMachine as nativeCreateCryptoMachine,
   buildHistoryBundle as nativeBuildHistoryBundle,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
+  disableBackup as nativeDisableBackup,
   discardScopeKey as nativeDiscardScopeKey,
   deviceIdentityKeys as nativeDeviceIdentityKeys,
   deviceStatuses as nativeDeviceStatuses,
+  enableBackup as nativeEnableBackup,
   encryptEvent as nativeEncryptEvent,
   createIdentity as nativeCreateIdentity,
   identityStatus as nativeIdentityStatus,
@@ -76,6 +87,8 @@ import {
   recoverIdentity as nativeRecoverIdentity,
   requestSelfVerification as nativeRequestSelfVerification,
   requestVerification as nativeRequestVerification,
+  restoreBackup as nativeRestoreBackup,
+  restoreKeyMatches as nativeRestoreKeyMatches,
   SenderTrustRequirement as NativeSenderTrustRequirement,
   SenderVerification as NativeSenderVerification,
   SessionFfiError,
@@ -294,6 +307,26 @@ vi.mock('./generated/matrix_crypto', async importOriginal => {
       ],
     })),
     recoverIdentity: vi.fn(async () => undefined),
+    // Key backup. `createBackup` and `restoreKeyMatches` are the two
+    // synchronous ones on this surface, so their mocks are too -- a `vi.fn`
+    // returning a promise here would make both facade functions typecheck
+    // and then hand a product a `Promise` where it expects a value.
+    createBackup: vi.fn(() => ({
+      restoreKey: 'EsTx native aaaa bbbb',
+      sealingKey: 'native-sealing-key',
+      versionRequest:
+        '{"algorithm":"m.megolm_backup.v1.curve25519-aes-sha2","auth_data":{"public_key":"native-sealing-key"}}',
+    })),
+    enableBackup: vi.fn(async () => undefined),
+    disableBackup: vi.fn(async () => undefined),
+    backupState: vi.fn(async () => ({
+      enabled: true,
+      version: '947281',
+      total: 9,
+      backedUp: 4,
+    })),
+    restoreKeyMatches: vi.fn(() => true),
+    restoreBackup: vi.fn(async () => ({ offered: 7, imported: 5 })),
   }
 })
 
@@ -3859,5 +3892,200 @@ describe('rotating a scope key', () => {
     const error = await discardScopeKey(scope).catch((e: unknown) => e)
     expect(isCryptoError(error)).toBe(true)
     expect((error as CryptoError).kind).toBe('malformed_identifier')
+  })
+})
+
+describe('key backup', () => {
+  const VERSION_INFO = {
+    algorithm: 'm.megolm_backup.v1.curve25519-aes-sha2',
+    auth_data: { public_key: 'native-sealing-key', signatures: {} },
+    version: '947281',
+    count: 42,
+    etag: 'opaque',
+  }
+
+  it('hands back the version request parsed, and the two keys as they came', () => {
+    const setup = createKeyBackup()
+
+    expect(setup.restoreKey).toBe('EsTx native aaaa bbbb')
+    expect(setup.sealingKey).toBe('native-sealing-key')
+    // Parsed, not the string the native side handed over. A product puts
+    // this in the body of a POST, where a JSON-encoded string is not the
+    // same thing as an object -- `createRecovery`'s account data above is
+    // treated the same way for the same reason.
+    expect(setup.versionRequest).toEqual({
+      algorithm: 'm.megolm_backup.v1.curve25519-aes-sha2',
+      auth_data: { public_key: 'native-sealing-key' },
+    })
+    expect(typeof setup.versionRequest).toBe('object')
+  })
+
+  it('is synchronous, so a product can show the key before it commits to anything', () => {
+    // Not `await`ed, and that is the assertion: a `Promise` here would be a
+    // product rendering "[object Promise]" as somebody's only copy of a
+    // secret. The native call it wraps declares no error type either, which
+    // is why nothing above catches.
+    const setup: unknown = createKeyBackup()
+    expect(setup).not.toBeInstanceOf(Promise)
+    expect(restoreKeyMatches('EsTx aaaa', VERSION_INFO)).not.toBeInstanceOf(
+      Promise,
+    )
+  })
+
+  it('reports a native module that never installed as a CryptoError', () => {
+    // The Rust side declares no error type, and this call was written
+    // unwrapped for that reason. What that missed is what
+    // `offerScannableCodes` had already recorded: the layer between here and
+    // there can fail on its own, and a product should catch one kind of
+    // thing from this surface rather than two. `createKeyBackup` is the one
+    // call made before a store exists, so it is the likeliest place to meet
+    // a module that failed to install.
+    vi.mocked(nativeCreateBackup).mockImplementationOnce(() => {
+      throw new TypeError("Cannot read property 'createBackup' of undefined")
+    })
+
+    let caught: unknown
+    try {
+      createKeyBackup()
+    } catch (e) {
+      caught = e
+    }
+    expect(isCryptoError(caught)).toBe(true)
+  })
+
+  it('sends the sealing key and the version down in that order', async () => {
+    await enableKeyBackup('a-sealing-key', '947281')
+
+    expect(vi.mocked(nativeEnableBackup).mock.calls.at(-1)).toEqual([
+      'a-sealing-key',
+      '947281',
+    ])
+  })
+
+  it('reports an empty version as a malformed identifier rather than a failure', async () => {
+    vi.mocked(nativeEnableBackup).mockRejectedValueOnce(
+      new BackupFfiError.MalformedIdentifier(),
+    )
+
+    const error = await enableKeyBackup('a-sealing-key', '').catch(
+      (e: unknown) => e,
+    )
+
+    expect(isCryptoError(error)).toBe(true)
+    expect((error as CryptoError).kind).toBe('malformed_identifier')
+  })
+
+  it('reads the state through without reshaping it', async () => {
+    const state = await getKeyBackupState()
+
+    expect(state).toEqual({
+      enabled: true,
+      version: '947281',
+      total: 9,
+      backedUp: 4,
+    })
+  })
+
+  it('stringifies the version description before comparing keys', () => {
+    expect(restoreKeyMatches('EsTx aaaa bbbb cccc', VERSION_INFO)).toBe(true)
+
+    const [key, described] =
+      vi.mocked(nativeRestoreKeyMatches).mock.calls.at(-1) ?? []
+    expect(key).toBe('EsTx aaaa bbbb cccc')
+    expect(typeof described).toBe('string')
+    expect(JSON.parse(described as string)).toEqual(VERSION_INFO)
+  })
+
+  it('tells a key that is not a key apart from a key for another backup', () => {
+    vi.mocked(nativeRestoreKeyMatches).mockImplementationOnce(() => {
+      throw new BackupFfiError.MalformedIdentifier()
+    })
+
+    let caught: unknown
+    try {
+      restoreKeyMatches('not a key', VERSION_INFO)
+    } catch (e) {
+      caught = e
+    }
+    expect((caught as CryptoError).kind).toBe('malformed_identifier')
+
+    // The other half: a well-formed key that opens a different backup is a
+    // plain `false`, never an error. A product that folded the two would
+    // tell somebody to check their typing when there is no typo.
+    vi.mocked(nativeRestoreKeyMatches).mockReturnValueOnce(false)
+    expect(restoreKeyMatches('EsTx bbbb', VERSION_INFO)).toBe(false)
+  })
+
+  it('sends the downloaded backup down as JSON and reports both counts', async () => {
+    const downloaded = {
+      rooms: { '!scope:example.org': { sessions: { abc: {} } } },
+    }
+
+    const restored = await restoreKeyBackup(
+      'EsTx aaaa bbbb cccc',
+      '947281',
+      downloaded,
+    )
+
+    expect(restored).toEqual({ offered: 7, imported: 5 })
+    const [key, version, keys] =
+      vi.mocked(nativeRestoreBackup).mock.calls.at(-1) ?? []
+    expect(key).toBe('EsTx aaaa bbbb cccc')
+    expect(version).toBe('947281')
+    expect(typeof keys).toBe('string')
+    expect(JSON.parse(keys as string)).toEqual(downloaded)
+  })
+
+  it('rejects a download that cannot be stringified, before any native call', async () => {
+    const before = vi.mocked(nativeRestoreBackup).mock.calls.length
+    const cyclic: Record<string, unknown> = {}
+    cyclic.self = cyclic
+
+    const error = await restoreKeyBackup('EsTx aaaa', '947281', cyclic).catch(
+      (e: unknown) => e,
+    )
+
+    expect(isCryptoError(error)).toBe(true)
+    expect((error as CryptoError).kind).toBe('malformed_payload')
+    expect(vi.mocked(nativeRestoreBackup).mock.calls.length).toBe(before)
+  })
+
+  it('carries the wrong key across as its own kind', async () => {
+    vi.mocked(nativeRestoreBackup).mockRejectedValueOnce(
+      new BackupFfiError.WrongKey(),
+    )
+
+    const error = await restoreKeyBackup('EsTx bbbb', '947281', {}).catch(
+      (e: unknown) => e,
+    )
+
+    // The whole reason this kind exists: 'malformed_identifier' would send
+    // somebody to fix a typo in a key that has none, and 'failed' would say
+    // nothing at all. It is a different secret, and only its own kind says
+    // so.
+    expect(isCryptoError(error)).toBe(true)
+    expect((error as CryptoError).kind).toBe('wrong_key')
+  })
+
+  it('reports disabling through, and asks the native side for nothing else', async () => {
+    const before = vi.mocked(nativeCreateBackup).mock.calls.length
+
+    await expect(disableKeyBackup()).resolves.toBeUndefined()
+
+    expect(vi.mocked(nativeDisableBackup).mock.calls.length).toBeGreaterThan(0)
+    // Disabling makes no key and publishes no version: it is a local act,
+    // and a product that saw a fresh restore key appear here would have been
+    // handed a second secret nobody asked for.
+    expect(vi.mocked(nativeCreateBackup).mock.calls.length).toBe(before)
+  })
+
+  it('reports a store failure as a failure rather than as a wrong key', async () => {
+    vi.mocked(nativeBackupState).mockRejectedValueOnce(
+      new BackupFfiError.Failed(),
+    )
+
+    const error = await getKeyBackupState().catch((e: unknown) => e)
+
+    expect((error as CryptoError).kind).toBe('failed')
   })
 })

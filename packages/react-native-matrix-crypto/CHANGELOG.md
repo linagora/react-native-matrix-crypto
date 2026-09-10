@@ -16,6 +16,94 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.7.0
+
+### Added
+
+- Key backup, so that losing a telephone stops costing every message it had
+  already received. `createKeyBackup` generates the key and describes the
+  version to publish, `enableKeyBackup` starts backing up to a version the
+  homeserver named, `getKeyBackupState` reports how far along it is,
+  `restoreKeyMatches` says whether a key opens a backup before it is
+  downloaded, `restoreKeyBackup` decrypts and imports one, and
+  `disableKeyBackup` stops. The records `BackupSetup`, `BackupState` and
+  `BackupImport` come with them.
+
+  Nothing happens until a product asks: `createKeyBackup` makes no request and
+  changes no state, so its result can be shown and refused before anything is
+  published.
+
+  `restoreKeyBackup` tells a damaged download apart from a wrong key. A body
+  whose entries cannot be read at all is `malformed_payload`, because those
+  entries never reached the key and so cannot be evidence about it;
+  `wrong_key` is reserved for a key that was given something to open and did
+  not open it.
+
+- An eighth outgoing request kind, `room_key_backup`, for
+  `PUT /_matrix/client/v3/room_keys/keys`. It appears only after
+  `enableKeyBackup`, so a product that never sets a backup up sees no change
+  in its pump at all. The `version` that belongs in the query string travels
+  inside `body`, the third of the pump's disclosed exceptions; its response
+  must carry `etag` and `count`.
+
+- Two error kinds. `wrong_key` is a well-formed restore key that opens a
+  different backup — a different secret rather than a typo, which is a
+  distinction a product has to word differently. `not_what_was_announced` is
+  a downloaded attachment failing the SHA-256 its secret carried.
+
+### Fixed
+
+- **`encryptAttachment` and `decryptAttachment` errors reached products as
+  kind `'unknown'`.** `AttachmentFfiError` was generated and never listed in
+  the test that walks every error enum, so its three variants had no mapping
+  and arrived with the message "crypto error: unknown" — including the one
+  that says a downloaded file is not the file that was announced, which the
+  Rust core is careful to tell apart from every other failure. `MalformedSecret`
+  now reports `malformed_payload` and `NotWhatWasAnnounced` reports
+  `not_what_was_announced`.
+
+  It was found by listing every generated error enum in that walk, which the
+  key-backup work did because its own enum needed covering. `HistoryFfiError`
+  was unlisted too and had, by luck rather than design, a complete mapping
+  already.
+
+### Changed
+
+- **`enableKeyBackup` on a different version drops the batch already in
+  flight.** Nothing upstream does it: `enable_backup_v1` writes the key and
+  never touches the pending request, and the backup machine hands an existing
+  one back without comparing its version. So replacing a recovery key while a
+  batch was unacknowledged would have re-emitted the _retired_ version on
+  every drain for ever — the homeserver answering `M_WRONG_ROOM_KEYS_VERSION`
+  and the pump never moving again, through the one path that exists to help
+  somebody who wrote their key down badly. Re-enabling the _same_ version, which
+  is what every launch does, is untouched.
+
+- **The private half of a backup key is never written to the crypto store.**
+  Upstream offers to keep it there for gossiping between devices and this
+  library does not call that: what a device needs to keep writing is the
+  public half, which `createKeyBackup` hands back for a product to keep. The
+  cost is stated rather than discovered — a device cannot pass the key to
+  another device of the same account, and a second device restores from the
+  restore key like any other.
+
+### Worth knowing before you ship it
+
+- **`m.megolm_backup.v1.curve25519-aes-sha2` does not authenticate its
+  ciphertext.** Whoever can write to a backup can substitute keys in it
+  undetectably, and a device restoring would decrypt what they chose;
+  `vodozemac` gates the algorithm behind a feature named
+  `insecure-pk-encryption`. It is the only server-side backup Matrix has, so
+  the choice is this or none, and the obligation it creates is that a product
+  says so rather than letting "end-to-end encrypted" imply more than the
+  mechanism delivers.
+
+- **There are now two secrets in this library that look alike.**
+  `createRecovery`'s `recoveryKey` opens the account's private signing keys;
+  `createKeyBackup`'s `restoreKey` opens this backup's message keys. Both are
+  32 random bytes in base58 and neither opens what the other opens. A product
+  offering both must not call them the same thing.
+
 ## 0.6.1
 
 ### Added

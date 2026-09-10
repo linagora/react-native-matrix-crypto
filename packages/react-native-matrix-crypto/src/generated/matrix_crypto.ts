@@ -111,6 +111,57 @@ export async function acceptVerification(
 }
 
 /**
+ * What this device is doing about backup, and how far along it is. Mirrors
+ * `backup_state`.
+ */
+export async function backupState(asyncOpts_?: {
+  signal: AbortSignal;
+}): Promise<BackupState> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_backup_state();
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeBackupState.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeBackupFfiError.lift.bind(
+        FfiConverterTypeBackupFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Publishes the signing identity this device already holds.
  *
  * Mirrors `bootstrap_identity`; see its own doc comment in
@@ -375,6 +426,33 @@ export async function confirmVerification(
       __error.stack = __stack;
     }
     throw __error;
+  }
+}
+
+/**
+ * Generates a backup key and describes the version to publish with it.
+ * Mirrors `create_backup`; see its own doc comment in
+ * `matrix-crypto-core::backup`, and that module's own, for why nothing has
+ * happened when this returns, why the private half is never stored, and why
+ * the secret it hands back is not the recovery key `create_recovery`
+ * produces.
+ *
+ * Infallible and takes no machine, which is the core function's shape
+ * exactly: generating a key is arithmetic on 32 random bytes.
+ */
+export function createBackup(): BackupSetup {
+  const __rb: Uint8Array = uniffiCaller.rustCall(
+    /*caller:*/ (callStatus) => {
+      return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_create_backup(
+        callStatus
+      );
+    },
+    /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString)
+  );
+  try {
+    return FfiConverterTypeBackupSetup.lift(__rb);
+  } finally {
+    nativeModule().rustbuffer_free(__rb);
   }
 }
 
@@ -797,6 +875,44 @@ export async function deviceStatuses(
 }
 
 /**
+ * Stops backing up and forgets which keys were already backed up. Mirrors
+ * `disable_backup`; see its own doc comment for why this is a local act with
+ * no protocol meaning, and what re-enabling then costs.
+ */
+export async function disableBackup(asyncOpts_?: {
+  signal: AbortSignal;
+}): Promise<void> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_disable_backup();
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_void,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_void,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_void,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_void,
+      /*liftFunc:*/ (_v) => {},
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeBackupFfiError.lift.bind(
+        FfiConverterTypeBackupFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Forces this scope's outbound group session to be replaced. Mirrors
  * `discard_scope_key`; see its own doc comment in
  * `matrix-crypto-core::session` for why an eviction that does not do this
@@ -834,6 +950,50 @@ export async function discardScopeKey(
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSessionFfiError.lift.bind(
         FfiConverterTypeSessionFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Starts backing up to `version` under `sealing_key`. Mirrors
+ * `enable_backup`; see its own doc comment for why both arguments come back
+ * on every launch and why an empty version is refused rather than quietly
+ * doing nothing.
+ */
+export async function enableBackup(
+  sealingKey: string,
+  version: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<void> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_enable_backup(
+          FfiConverterString.lower(sealingKey, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(version, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_void,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_void,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_void,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_void,
+      /*liftFunc:*/ (_v) => {},
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeBackupFfiError.lift.bind(
+        FfiConverterTypeBackupFfiError
       )
     );
   } catch (__error: any) {
@@ -1657,6 +1817,99 @@ export async function requestVerification(
 }
 
 /**
+ * Decrypts a downloaded backup and imports what it holds. Mirrors
+ * `restore_backup`; see its own doc comment for why `version` is recorded
+ * rather than checked, why an entry that will not decrypt is skipped rather
+ * than failing the restore, and why this enables nothing.
+ */
+export async function restoreBackup(
+  restoreKey: string,
+  version: string,
+  keys: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<BackupImport> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_restore_backup(
+          FfiConverterString.lower(restoreKey, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(version, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(keys, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeBackupImport.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeBackupFfiError.lift.bind(
+        FfiConverterTypeBackupFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Whether `restore_key` opens the backup `version_info` describes. Mirrors
+ * `restore_key_matches`; see its own doc comment for why asking this before
+ * downloading is the difference between one small request and the whole
+ * backup.
+ *
+ * Infallible in the machine sense and takes none: it compares two public
+ * keys.
+ */
+export function restoreKeyMatches(
+  restoreKey: string,
+  versionInfo: string
+): boolean /*throws*/ {
+  return FfiConverterBool.lift(
+    uniffiCaller.rustCallWithError(
+      /*liftError:*/ FfiConverterTypeBackupFfiError.lift.bind(
+        FfiConverterTypeBackupFfiError
+      ),
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_restore_key_matches(
+          FfiConverterString.lower(restoreKey, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(
+            versionInfo,
+            nativeModule().rustbuffer_alloc
+          ),
+          callStatus
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString)
+    )
+  );
+}
+
+/**
  * Registers the process's crypto signal observer, replacing any previous
  * one. Mirrors `set_crypto_observer`; see its own doc comment in
  * `matrix-crypto-core::observer`, including why this is not a call a
@@ -2225,6 +2478,166 @@ const FfiConverterTypeAccountDataEntry = (() => {
       return (
         FfiConverterString.allocationSize(value.eventType) +
         FfiConverterString.allocationSize(value.content)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::BackupImport`.
+ */
+export type BackupImport = {
+  offered: number;
+  imported: number;
+};
+
+/**
+ * Generated factory for {@link BackupImport} record objects.
+ */
+export const BackupImport = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<BackupImport, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<BackupImport>,
+  });
+})();
+
+const FfiConverterTypeBackupImport = (() => {
+  type TypeName = BackupImport;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        offered: FfiConverterUInt32.readFromCursor(c),
+        imported: FfiConverterUInt32.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterUInt32.writeIntoCursor(value.offered, c);
+      FfiConverterUInt32.writeIntoCursor(value.imported, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt32.allocationSize(value.offered) +
+        FfiConverterUInt32.allocationSize(value.imported)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::BackupSetup`.
+ *
+ * **No `Debug` derive**, for the reason `RecoverySetup` above gives and the
+ * core type repeats: `restore_key` opens every key this backup will ever
+ * hold.
+ */
+export type BackupSetup = {
+  restoreKey: string;
+  sealingKey: string;
+  versionRequest: string;
+};
+
+/**
+ * Generated factory for {@link BackupSetup} record objects.
+ */
+export const BackupSetup = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<BackupSetup, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<BackupSetup>,
+  });
+})();
+
+const FfiConverterTypeBackupSetup = (() => {
+  type TypeName = BackupSetup;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        restoreKey: FfiConverterString.readFromCursor(c),
+        sealingKey: FfiConverterString.readFromCursor(c),
+        versionRequest: FfiConverterString.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterString.writeIntoCursor(value.restoreKey, c);
+      FfiConverterString.writeIntoCursor(value.sealingKey, c);
+      FfiConverterString.writeIntoCursor(value.versionRequest, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.restoreKey) +
+        FfiConverterString.allocationSize(value.sealingKey) +
+        FfiConverterString.allocationSize(value.versionRequest)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::BackupState`.
+ */
+export type BackupState = {
+  enabled: boolean;
+  version?: string;
+  total: number;
+  backedUp: number;
+};
+
+/**
+ * Generated factory for {@link BackupState} record objects.
+ */
+export const BackupState = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<BackupState, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<BackupState>,
+  });
+})();
+
+const FfiConverterTypeBackupState = (() => {
+  type TypeName = BackupState;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        enabled: FfiConverterBool.readFromCursor(c),
+        version: FfiConverterOptionalString.readFromCursor(c),
+        total: FfiConverterUInt32.readFromCursor(c),
+        backedUp: FfiConverterUInt32.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterBool.writeIntoCursor(value.enabled, c);
+      FfiConverterOptionalString.writeIntoCursor(value.version, c);
+      FfiConverterUInt32.writeIntoCursor(value.total, c);
+      FfiConverterUInt32.writeIntoCursor(value.backedUp, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterBool.allocationSize(value.enabled) +
+        FfiConverterOptionalString.allocationSize(value.version) +
+        FfiConverterUInt32.allocationSize(value.total) +
+        FfiConverterUInt32.allocationSize(value.backedUp)
       );
     }
   }
@@ -3610,6 +4023,268 @@ const FfiConverterTypeAttachmentFfiError = (() => {
           return 4;
         }
         case AttachmentFfiError_Tags.Failed: {
+          return 4;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: BackupFfiError
+export enum BackupFfiError_Tags {
+  MalformedIdentifier = "MalformedIdentifier",
+  MalformedPayload = "MalformedPayload",
+  NotInitialised = "NotInitialised",
+  Failed = "Failed",
+  WrongKey = "WrongKey",
+}
+/**
+ * The wire mirror of `matrix_crypto_core::BackupError`.
+ *
+ * A new enum rather than a fold into an existing one, for the reason
+ * `HistoryFfiError` above states in full: variants of an FFI enum carry
+ * ordinals the generated bindings reproduce as `case N`, so a separate
+ * surface gets a separate enum and constrains nothing already shipped. The
+ * kind no other error here has -- `WrongKey` -- belongs to key backup
+ * alone.
+ */
+export const BackupFfiError = (() => {
+  type MalformedIdentifier__interface = {
+    tag: BackupFfiError_Tags.MalformedIdentifier;
+  };
+  class MalformedIdentifier_
+    extends UniffiError
+    implements MalformedIdentifier__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "BackupFfiError";
+    readonly tag = BackupFfiError_Tags.MalformedIdentifier;
+    constructor() {
+      super("BackupFfiError", "MalformedIdentifier");
+    }
+
+    static new(): MalformedIdentifier_ {
+      return new MalformedIdentifier_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedIdentifier_ {
+      return obj.tag === BackupFfiError_Tags.MalformedIdentifier;
+    }
+    static hasInner(obj: any): obj is MalformedIdentifier_ {
+      return false;
+    }
+  }
+
+  type MalformedPayload__interface = {
+    tag: BackupFfiError_Tags.MalformedPayload;
+  };
+  class MalformedPayload_
+    extends UniffiError
+    implements MalformedPayload__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "BackupFfiError";
+    readonly tag = BackupFfiError_Tags.MalformedPayload;
+    constructor() {
+      super("BackupFfiError", "MalformedPayload");
+    }
+
+    static new(): MalformedPayload_ {
+      return new MalformedPayload_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedPayload_ {
+      return obj.tag === BackupFfiError_Tags.MalformedPayload;
+    }
+    static hasInner(obj: any): obj is MalformedPayload_ {
+      return false;
+    }
+  }
+
+  type NotInitialised__interface = {
+    tag: BackupFfiError_Tags.NotInitialised;
+  };
+  class NotInitialised_
+    extends UniffiError
+    implements NotInitialised__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "BackupFfiError";
+    readonly tag = BackupFfiError_Tags.NotInitialised;
+    constructor() {
+      super("BackupFfiError", "NotInitialised");
+    }
+
+    static new(): NotInitialised_ {
+      return new NotInitialised_();
+    }
+
+    static instanceOf(obj: any): obj is NotInitialised_ {
+      return obj.tag === BackupFfiError_Tags.NotInitialised;
+    }
+    static hasInner(obj: any): obj is NotInitialised_ {
+      return false;
+    }
+  }
+
+  type Failed__interface = {
+    tag: BackupFfiError_Tags.Failed;
+  };
+  class Failed_ extends UniffiError implements Failed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "BackupFfiError";
+    readonly tag = BackupFfiError_Tags.Failed;
+    constructor() {
+      super("BackupFfiError", "Failed");
+    }
+
+    static new(): Failed_ {
+      return new Failed_();
+    }
+
+    static instanceOf(obj: any): obj is Failed_ {
+      return obj.tag === BackupFfiError_Tags.Failed;
+    }
+    static hasInner(obj: any): obj is Failed_ {
+      return false;
+    }
+  }
+
+  type WrongKey__interface = {
+    tag: BackupFfiError_Tags.WrongKey;
+  };
+  class WrongKey_ extends UniffiError implements WrongKey__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "BackupFfiError";
+    readonly tag = BackupFfiError_Tags.WrongKey;
+    constructor() {
+      super("BackupFfiError", "WrongKey");
+    }
+
+    static new(): WrongKey_ {
+      return new WrongKey_();
+    }
+
+    static instanceOf(obj: any): obj is WrongKey_ {
+      return obj.tag === BackupFfiError_Tags.WrongKey;
+    }
+    static hasInner(obj: any): obj is WrongKey_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is BackupFfiError {
+    return obj[uniffiTypeNameSymbol] === "BackupFfiError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    MalformedIdentifier: MalformedIdentifier_,
+    MalformedPayload: MalformedPayload_,
+    NotInitialised: NotInitialised_,
+    Failed: Failed_,
+    WrongKey: WrongKey_,
+  });
+})();
+/**
+ * The wire mirror of `matrix_crypto_core::BackupError`.
+ *
+ * A new enum rather than a fold into an existing one, for the reason
+ * `HistoryFfiError` above states in full: variants of an FFI enum carry
+ * ordinals the generated bindings reproduce as `case N`, so a separate
+ * surface gets a separate enum and constrains nothing already shipped. The
+ * kind no other error here has -- `WrongKey` -- belongs to key backup
+ * alone.
+ */
+export type BackupFfiError = InstanceType<
+  (typeof BackupFfiError)[
+    | "MalformedIdentifier"
+    | "MalformedPayload"
+    | "NotInitialised"
+    | "Failed"
+    | "WrongKey"]
+>;
+
+// FfiConverter for enum BackupFfiError
+const FfiConverterTypeBackupFfiError = (() => {
+  type TypeName = BackupFfiError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return new BackupFfiError.MalformedIdentifier();
+        case 2:
+          return new BackupFfiError.MalformedPayload();
+        case 3:
+          return new BackupFfiError.NotInitialised();
+        case 4:
+          return new BackupFfiError.Failed();
+        case 5:
+          return new BackupFfiError.WrongKey();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value.tag) {
+        case BackupFfiError_Tags.MalformedIdentifier: {
+          c.writeI32(1);
+          return;
+        }
+        case BackupFfiError_Tags.MalformedPayload: {
+          c.writeI32(2);
+          return;
+        }
+        case BackupFfiError_Tags.NotInitialised: {
+          c.writeI32(3);
+          return;
+        }
+        case BackupFfiError_Tags.Failed: {
+          c.writeI32(4);
+          return;
+        }
+        case BackupFfiError_Tags.WrongKey: {
+          c.writeI32(5);
+          return;
+        }
+        default:
+          // Throwing from here means that BackupFfiError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case BackupFfiError_Tags.MalformedIdentifier: {
+          return 4;
+        }
+        case BackupFfiError_Tags.MalformedPayload: {
+          return 4;
+        }
+        case BackupFfiError_Tags.NotInitialised: {
+          return 4;
+        }
+        case BackupFfiError_Tags.Failed: {
+          return 4;
+        }
+        case BackupFfiError_Tags.WrongKey: {
           return 4;
         }
         default:
@@ -6512,6 +7187,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_backup_state() !==
+    40120
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_backup_state"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_bootstrap_identity() !==
     15762
   ) {
@@ -6557,6 +7240,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_confirm_verification"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_backup() !==
+    42255
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_create_backup"
     );
   }
   if (
@@ -6616,11 +7307,27 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_disable_backup() !==
+    48128
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_disable_backup"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key() !==
     23555
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_discard_scope_key"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_enable_backup() !==
+    28838
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_enable_backup"
     );
   }
   if (
@@ -6743,6 +7450,22 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_restore_backup() !==
+    2644
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_restore_backup"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_restore_key_matches() !==
+    62301
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_restore_key_matches"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_set_crypto_observer() !==
     31561
   ) {
@@ -6840,6 +7563,10 @@ export default Object.freeze({
   converters: {
     FfiConverterTypeAccountDataEntry,
     FfiConverterTypeAttachmentFfiError,
+    FfiConverterTypeBackupFfiError,
+    FfiConverterTypeBackupImport,
+    FfiConverterTypeBackupSetup,
+    FfiConverterTypeBackupState,
     FfiConverterTypeCodeCapabilities,
     FfiConverterTypeCryptoMachineConfig,
     FfiConverterTypeCryptoObserver,

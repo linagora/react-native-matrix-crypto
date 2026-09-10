@@ -26,6 +26,7 @@ import type { CryptoError } from './errors'
 /* eslint-enable @typescript-eslint/no-unused-vars */
 import {
   acceptVerification as nativeAcceptVerification,
+  backupState as nativeBackupState,
   bootstrapIdentity as nativeBootstrapIdentity,
   buildHistoryBundle as nativeBuildHistoryBundle,
   decryptAttachment as nativeDecryptAttachment,
@@ -33,12 +34,15 @@ import {
   cancelVerification as nativeCancelVerification,
   confirmScan as nativeConfirmScan,
   confirmVerification as nativeConfirmVerification,
+  createBackup as nativeCreateBackup,
   createCryptoMachine as nativeCreateCryptoMachine,
   createRecovery as nativeCreateRecovery,
   decryptEvent as nativeDecryptEvent,
+  disableBackup as nativeDisableBackup,
   discardScopeKey as nativeDiscardScopeKey,
   deviceIdentityKeys as nativeDeviceIdentityKeys,
   deviceStatuses as nativeDeviceStatuses,
+  enableBackup as nativeEnableBackup,
   encryptEvent as nativeEncryptEvent,
   createIdentity as nativeCreateIdentity,
   identityStatus as nativeIdentityStatus,
@@ -52,6 +56,8 @@ import {
   recoverIdentity as nativeRecoverIdentity,
   requestSelfVerification as nativeRequestSelfVerification,
   requestVerification as nativeRequestVerification,
+  restoreBackup as nativeRestoreBackup,
+  restoreKeyMatches as nativeRestoreKeyMatches,
   shareHistoryBundle as nativeShareHistoryBundle,
   shareScopeKey as nativeShareScopeKey,
   startVerificationComparison as nativeStartVerificationComparison,
@@ -191,11 +197,13 @@ export interface DeviceStatus {
  * | `'signature_upload'` | `POST /_matrix/client/v3/keys/signatures/upload` | `{ failures? }` (optional; `{}` is valid) |
  * | `'room_message'` | `PUT /_matrix/client/v3/rooms/{roomId}/send/{eventType}/{txnId}` | `{ event_id: string }` |
  * | `'signing_keys_upload'` | `POST /_matrix/client/v3/keys/device_signing/upload` | `{}`, and only `{}`, for the reason `'to_device'` gives: the response type declares no fields, so no key could widen the shape. **This is the row where that costs you something.** The endpoint is user-interactive, its refusal is a `401` with a challenge, and `{}` is also what a 502 with no body arrives as. Branch on the status and send anything that is not a 2xx to {@link markRequestFailed}: reporting a challenge here would mark an identity published that never was |
+ * | `'room_key_backup'` | `PUT /_matrix/client/v3/room_keys/keys?version={version}` | `{ etag: string, count: number }`, both required. Appears only after {@link enableKeyBackup}; the `version` for the query string is `body.version`, see below |
  *
- * `'to_device'` and `'room_message'` carry their own path segments
- * (`eventType`/`txnId`, and for the latter `roomId` too) inside `body`
+ * `'to_device'`, `'room_message'` and `'room_key_backup'` carry their own
+ * URL values (`eventType`/`txnId`, for the second `roomId` too, and for the
+ * third the `version` that belongs in the query string) inside `body`
  * itself, alongside the wire content, since this library has no other way
- * to hand them to the product -- see the two disclosed exceptions the
+ * to hand them to the product -- see the three disclosed exceptions the
  * core's own `describe_outgoing` documents for itself.
  *
  * See {@link shareScopeKey}'s own doc comment for the order a key has to
@@ -702,6 +710,12 @@ export async function discardScopeKey(scope: CryptoScopeId): Promise<boolean> {
  * and discarding what this returns is the mistake section 3bis is named
  * for -- a machine that encrypts to nobody and never learns that any of it
  * happened.
+ *
+ * Once {@link enableKeyBackup} has been called it also carries the next
+ * batch of keys the backup has no copy of, as `'room_key_backup'`. That is
+ * the whole schedule: a backup makes progress when a pump is drained and
+ * its requests are reported sent, and at no other time. A device that stops
+ * draining stops backing up.
  *
  * **The returned order is significant, and you must preserve it. Send the
  * requests in the order this returns them** -- not "start them in that order
@@ -3470,4 +3484,289 @@ export async function decryptAttachment(
   } catch (e) {
     throw toCryptoError(e)
   }
+}
+
+/**
+ * Everything {@link createKeyBackup} produced: the one secret to show your
+ * user, the half this device keeps, and the version to publish.
+ *
+ * The two strings are not interchangeable and only one of them is a secret.
+ * See each field.
+ */
+export interface BackupSetup {
+  /**
+   * The base58 restore key, in groups of four characters.
+   *
+   * **Not stored anywhere and not producible again.** Show it once, and
+   * mean it: this library keeps no copy, and neither does the homeserver.
+   * Whitespace is ignored when it comes back, so the grouping is a courtesy
+   * to whoever copies it rather than part of the value.
+   *
+   * **Not the recovery key {@link createRecovery} returns.** That one opens
+   * this account's private signing keys; this one opens this backup's
+   * message keys. Neither opens what the other opens. A product that offers
+   * both must not call them the same thing.
+   */
+  restoreKey: string
+  /**
+   * The public half. Keep it; it is what backing up needs, and it is not a
+   * secret -- it encrypts and cannot decrypt.
+   *
+   * Hand it to {@link enableKeyBackup} with the version your homeserver
+   * answered with, on this launch and on **every launch afterwards**. This
+   * library persists neither, so a process that does not make that call is a
+   * process that quietly backs nothing up.
+   */
+  sealingKey: string
+  /**
+   * The body to publish: `POST /_matrix/client/v3/room_keys/version`, sent
+   * as it is. The homeserver answers with a `version`, which is the other
+   * half of what {@link enableKeyBackup} needs.
+   */
+  versionRequest: unknown
+}
+
+/** What this device is doing about backup, from {@link getKeyBackupState}. */
+export interface BackupState {
+  /**
+   * Whether {@link enableKeyBackup} has been called since this process
+   * started -- **not** whether a backup exists on your homeserver, which
+   * this library cannot know without a request it will not make.
+   */
+  enabled: boolean
+  /**
+   * The version being backed up to, if any. Opaque; never parse it.
+   *
+   * Optional rather than required-and-possibly-undefined, which is the shape
+   * every other absent value on this surface takes (`emoji?:`,
+   * `senderVerification?:`).
+   */
+  version?: string
+  /** How many message keys this device holds. */
+  total: number
+  /**
+   * How many of them your homeserver has a copy of.
+   *
+   * Counted against the enabled version, so it reads zero after a version is
+   * replaced even though nothing was lost: those keys are backed up to a
+   * version this device no longer writes to, and they will be written again.
+   */
+  backedUp: number
+}
+
+/** What {@link restoreKeyBackup} actually did. */
+export interface BackupImport {
+  /** How many keys the downloaded backup carried. */
+  offered: number
+  /**
+   * How many were imported. Lower than `offered` when this device already
+   * held a better copy of a key -- one reaching further back into the
+   * conversation -- which is kept in preference to the backed-up one. Both
+   * zero is an empty backup, not a failure.
+   */
+  imported: number
+}
+
+/**
+ * Generates a backup key and describes the version to publish with it.
+ *
+ * **Nothing has happened when this returns.** No request was made, no state
+ * changed, and this device is not backing anything up. So you may show the
+ * restore key -- and let somebody refuse it -- before committing to
+ * anything, and calling this twice costs nothing but two unrelated keys.
+ *
+ * The sequence this begins:
+ *
+ * 1. `POST /room_keys/version` with {@link BackupSetup.versionRequest}.
+ * 2. Take the `version` the homeserver answers with.
+ * 3. {@link enableKeyBackup} with that and {@link BackupSetup.sealingKey}.
+ *
+ * Until step 3, nothing is backed up.
+ *
+ * **Synchronous, and it needs no crypto machine**: generating a key is
+ * arithmetic on 32 random bytes and touches nothing this library holds.
+ *
+ * # What this mechanism does not promise
+ *
+ * `m.megolm_backup.v1.curve25519-aes-sha2` **does not authenticate its
+ * ciphertext**. Whoever can write to your backup -- your account, or your
+ * homeserver -- can substitute keys in it undetectably, and a device
+ * restoring would decrypt what they chose. It is the only server-side backup
+ * Matrix has, so the choice is this or none; the obligation it creates is
+ * that your product says so rather than implying the homeserver is merely a
+ * blind store.
+ */
+export function createKeyBackup(): BackupSetup {
+  let setup
+  try {
+    setup = nativeCreateBackup()
+  } catch (e) {
+    // The Rust side declares no error type at all, and this was written
+    // unwrapped for that reason -- which is the mistake `offerScannableCodes`
+    // above had already recorded the answer to: *"the layer between here and
+    // there can fail on its own -- a native module that never installed
+    // throws from every call that reaches for it -- and a product should
+    // catch one kind of thing from this surface rather than two."*
+    //
+    // Unwrapped, a product whose native module failed to install would get
+    // something `isCryptoError` says nothing about, from the one call it
+    // makes before any store exists.
+    throw toCryptoError(e)
+  }
+  const { restoreKey, sealingKey, versionRequest } = setup
+  return {
+    restoreKey,
+    sealingKey,
+    // Parsed here rather than handed over as a string, so a product sends an
+    // object to an endpoint that takes an object -- `createRecovery`'s own
+    // treatment of the account data it returns.
+    versionRequest: parseContent(versionRequest),
+  }
+}
+
+/**
+ * Starts backing up message keys to `version`, under `sealingKey`.
+ *
+ * Both arguments come back on **every launch**: this library persists
+ * neither, so a process that does not make this call backs nothing up and
+ * says nothing about it. Keep `sealingKey` wherever your product keeps
+ * device-scoped values; it is not a secret.
+ *
+ * Nothing is uploaded here. The keys go out through
+ * {@link takeOutgoingRequests} as `'room_key_backup'` requests, in batches,
+ * starting with the next drain -- so enabling a backup on a device with a
+ * long history blocks nothing and shows its progress through
+ * {@link getKeyBackupState}.
+ *
+ * Rejects with kind `'malformed_identifier'` for a `version` that is empty
+ * or a `sealingKey` that is not the value {@link createKeyBackup} handed
+ * back.
+ */
+export async function enableKeyBackup(
+  sealingKey: string,
+  version: string,
+): Promise<void> {
+  try {
+    await nativeEnableBackup(sealingKey, version)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Stops backing up, and forgets which keys were already backed up.
+ *
+ * A local act with no protocol meaning: the backup on your homeserver is
+ * untouched and still opens with the same restore key. Deleting it is
+ * `DELETE /room_keys/version/{version}`, which is your request to make.
+ *
+ * **Not free.** Every key this device holds is marked un-backed-up, so
+ * enabling a backup again uploads all of them rather than the difference.
+ * To move to a *new* backup that is what you want; to pause one it is not.
+ */
+export async function disableKeyBackup(): Promise<void> {
+  try {
+    await nativeDisableBackup()
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * What this device is doing about backup, and how far along it is.
+ *
+ * The two counts are the honest progress indicator for a first backup. They
+ * are also how you notice a backup that has quietly stopped: `backedUp` well
+ * below `total` on a device that has been draining and reporting its pump
+ * means those requests are failing somewhere the pump cannot see.
+ */
+export async function getKeyBackupState(): Promise<BackupState> {
+  let state
+  try {
+    state = await nativeBackupState()
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+  const { enabled, version, total, backedUp } = state
+  return { enabled, version, total, backedUp }
+}
+
+/**
+ * Whether `restoreKey` opens the backup `versionInfo` describes.
+ *
+ * `versionInfo` is what `GET /room_keys/version` answered with, passed
+ * through as it is: only its `algorithm` and `auth_data` are read, so you do
+ * not have to take the object apart.
+ *
+ * **Ask this before downloading a backup.** The version description is a few
+ * hundred bytes and the backup is every key an account ever held, so a wrong
+ * key found here costs one small request and found in
+ * {@link restoreKeyBackup} costs the download. It is the same comparison
+ * that call makes for itself, which is why skipping this is wrong about
+ * speed and never about safety.
+ *
+ * A backup in an algorithm this library does not implement answers `false`
+ * rather than throwing: that key does not open that backup, and there is
+ * nothing different to do about it.
+ *
+ * **Synchronous, and it needs no crypto machine**: it compares two public
+ * keys. Throws kind `'malformed_identifier'` for a key that is not one, and
+ * `'malformed_payload'` for a `versionInfo` that is not a version
+ * description -- and the difference matters, because the first is a typo and
+ * the second is not the user's fault at all.
+ */
+export function restoreKeyMatches(
+  restoreKey: string,
+  versionInfo: unknown,
+): boolean {
+  const described = stringifyOrMalformed(versionInfo)
+  try {
+    return nativeRestoreKeyMatches(restoreKey, described)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+}
+
+/**
+ * Decrypts a downloaded backup with `restoreKey` and imports what it holds.
+ *
+ * `keys` is what `GET /room_keys/keys?version={version}` answered with,
+ * passed through as it is, and `version` is the version it came from.
+ *
+ * **`version` is recorded, not checked.** It is what marks the imported keys
+ * as already backed up, so a device that restores and then keeps backing up
+ * to that same version does not immediately upload everything it just
+ * downloaded. Naming a different one costs a redundant upload and nothing
+ * worse.
+ *
+ * A key that will not decrypt is skipped rather than failing the restore:
+ * one damaged entry in a backup of thousands must not cost somebody the
+ * other thousands. The difference shows in the two counts.
+ *
+ * Rejects with kind `'wrong_key'` when nothing at all decrypted and
+ * something was offered, which is a different key rather than a typo --
+ * {@link restoreKeyMatches} is how you find that out before the download.
+ *
+ * **This enables nothing.** A device that restores and then wants to keep
+ * the backup up to date still calls {@link enableKeyBackup}, because
+ * restoring onto a device that is about to be wiped again is an ordinary
+ * thing to do.
+ *
+ * What comes back is readability, not a message store: this library holds
+ * keys, and what they open is whatever ciphertext you still have.
+ */
+export async function restoreKeyBackup(
+  restoreKey: string,
+  version: string,
+  keys: unknown,
+): Promise<BackupImport> {
+  const downloaded = stringifyOrMalformed(keys)
+  let imported
+  try {
+    imported = await nativeRestoreBackup(restoreKey, version, downloaded)
+  } catch (e) {
+    throw toCryptoError(e)
+  }
+  const { offered, imported: taken } = imported
+  return { offered, imported: taken }
 }
