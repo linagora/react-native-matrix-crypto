@@ -788,7 +788,7 @@ jobs:
       # keys. The version is read from the module's own `go` directive rather
       # than pinned here, so what this job builds with is what the module
       # declares and there is one place to change it.
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: rust/matrix-crypto-core/tests/interop/mautrix_party/go.mod
           cache-dependency-path: rust/matrix-crypto-core/tests/interop/mautrix_party/go.sum
