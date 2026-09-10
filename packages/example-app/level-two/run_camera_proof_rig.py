@@ -306,18 +306,69 @@ def login_when_ready(homeserver, localpart, password, display_name, timeout_s=90
 # The AppleScript is written against System Events rather than the emulator
 # app, because the emulator has no scripting dictionary: it is a bare qemu
 # binary with a Cocoa window, and `tell application "qemu-system-..."` finds
-# nothing to talk to. The process name carries the host architecture
-# (qemu-system-aarch64 on this rig, qemu-system-x86_64 on an Intel one), so
-# it is discovered by prefix rather than named.
+# nothing to talk to. It is addressed by unix id and not by name: the process
+# name is only the host architecture (qemu-system-aarch64 on this rig,
+# qemu-system-x86_64 on an Intel one) and every AVD on the machine shares it,
+# so a name selects an arbitrary emulator. rig_emulator_pid says why that is
+# not good enough here.
 RAISE_EMULATOR_WINDOW = """
 tell application "System Events"
-    set found to (name of every process whose name starts with "qemu-system")
-    if found is {} then return "none"
-    set target to item 1 of found
-    set frontmost of process target to true
-    return target
+    set matches to (every process whose unix id is {pid})
+    if matches is {{}} then return "none"
+    set target to item 1 of matches
+    set frontmost of target to true
+    return name of target
 end tell
 """
+
+
+def rig_emulator_pid():
+    """The host pid of the AVD this run drives, not merely of an emulator.
+
+    The earlier version of this raised `item 1` of every qemu-system process.
+    That is right exactly when one emulator is running, and this rig is
+    somebody's daily Mac: on 2026-09-10 a second AVD was running here for
+    unrelated work, which made `item 1` a coin toss between the window the
+    camera must photograph and somebody else's. Picking wrong is worse than
+    failing, because the leg then spends its entire optical budget on the
+    wrong rectangle and reports the result as "no scan", which is the same
+    thing it says about glare, focus and a dead network.
+
+    The AVD name is asked of the emulator's own console rather than derived
+    from the serial, so it names whatever actually answers EMULATOR_SERIAL.
+    Matching is on the exact `-avd <name>` argument pair rather than a
+    substring, so `messagr-lot1` cannot match a `messagr-lot10`.
+    """
+    named = adb_on(EMULATOR_SERIAL, "emu", "avd", "name", timeout=60)
+    avd = next((line.strip() for line in named.stdout.splitlines()
+                if line.strip() and line.strip() != "OK"), "")
+    require(avd,
+            f"{EMULATOR_SERIAL} did not answer `emu avd name`, so this run "
+            "cannot tell which host window belongs to it. Remedy: check that "
+            "the rig emulator is a local AVD reachable over its console port.")
+
+    listed = run_command(["ps", "-ewwo", "pid,command"], timeout=60).stdout
+    hits = []
+    for line in listed.splitlines()[1:]:
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        fields = parts[1].split()
+        # The EXECUTABLE, not the line. Anything merely mentioning the AVD in
+        # its arguments would otherwise match, and the first thing that did
+        # was the shell running this function's own test, whose command line
+        # quoted both `qemu-system` and the AVD name.
+        if not fields or "qemu-system" not in fields[0]:
+            continue
+        if any(flag == "-avd" and value == avd
+               for flag, value in zip(fields, fields[1:])):
+            hits.append(parts[0])
+    require(len(hits) == 1,
+            f"expected exactly one running qemu process for AVD {avd}, found "
+            f"{len(hits)}: {hits or 'none'}.\n"
+            "      Remedy: the rig emulator must be running headed (not "
+            "-no-window) and exactly once.")
+    return hits[0], avd
 
 
 def raise_emulator_window():
@@ -337,23 +388,35 @@ def raise_emulator_window():
     would only spend the flow budget to reach a less informative failure. A
     rig that is not a Mac has no osascript, and arranging its own window is
     that rig's business -- said once, in the log, not treated as an error.
+
+    One remedy in the refusal below is worth its specificity. MEASURED
+    2026-09-10: from an interactive shell this call returns in 0.185s, and
+    from the GitHub Actions job on the same machine minutes later it hit the
+    60s timeout every time. The runner is a launchd service without an
+    Accessibility grant, and macOS BLOCKS the Apple Event rather than
+    refusing it, so the symptom is a hang and not the permission error the
+    remedy text would lead you to expect.
     """
     if shutil.which("osascript") is None:
         rig_log("no osascript on this host: the rig itself must make sure the "
                 "emulator's window is the thing the camera can see")
         return
-    result = run_command(["osascript", "-e", RAISE_EMULATOR_WINDOW], timeout=60)
+    pid, avd = rig_emulator_pid()
+    script = RAISE_EMULATOR_WINDOW.format(pid=pid)
+    result = run_command(["osascript", "-e", script], timeout=60)
     raised = result.stdout.strip()
     require(result.returncode == 0 and raised and raised != "none",
-            "could not bring the emulator's window to the front "
-            f"({result.stderr.strip() or raised or 'no qemu-system process'}).\n"
+            f"could not bring the window of AVD {avd} (pid {pid}) to the front "
+            f"({result.stderr.strip() or raised or 'no such process'}).\n"
             "      The camera is aimed at a rectangle of this machine's "
             "screen, so a window it cannot see is an optical failure the "
             "flow timeout would report as 'no scan'. Remedies: start the "
             "emulator with a window (not -no-window), and grant this runner "
             "Accessibility permission in System Settings -> Privacy & "
-            "Security so System Events may raise it.")
-    rig_log(f"emulator window raised to the front ({raised})")
+            "Security so System Events may raise it. A 60s timeout here, "
+            "rather than an error, is what a missing Accessibility grant "
+            "looks like.")
+    rig_log(f"emulator window raised to the front ({raised}, AVD {avd}, pid {pid})")
 
 
 def prepare_emulator(serial):
