@@ -62,7 +62,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version-file: '.nvmrc', cache: yarn }
-      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+      # NEVER below 6.0.1, and the reason is this rig specifically. v6 added
+      # GPG verification of the downloaded Temurin tarball, and 6.0.0 builds
+      # the verification keyring under RUNNER_TEMP. This runner's temp path is
+      # long enough that the gpg-agent socket beneath it passes macOS's
+      # 104-byte AF_UNIX limit, so gpg exits 2 while importing the key and the
+      # leg dies before it has touched a phone. MEASURED here 2026-09-10 with
+      # 6.0.0: "Failed to verify signature for Temurin version 17.0.20+101
+      # ... The process '/opt/homebrew/bin/gpg' failed with exit code 2".
+      # 6.0.1 creates those homes under os.tmpdir() instead (setup-java#1266).
+      # The ci.yml copy of this step never saw it: hosted runners have a short
+      # temp path, which is exactly why no required check could catch this and
+      # a dispatch of this workflow was what found it.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with: { distribution: temurin, java-version: '17' }
       # Python is set up WITHOUT actions/setup-python: on a self-hosted macOS
       # runner that action hardcodes AGENT_TOOLSDIRECTORY to
