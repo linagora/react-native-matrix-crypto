@@ -46,10 +46,31 @@ Versions 0.1.0 through 0.3.0 predate this file.
   inside `body`, the third of the pump's disclosed exceptions; its response
   must carry `etag` and `count`.
 
-- Two error kinds. `wrong_key` is a well-formed restore key that opens a
+- A key vault: `createKeyVault` puts every message key this account holds
+  into one file under a passphrase, `openKeyVault` opens one and imports what
+  it holds. The format is Matrix's own armoured `MEGOLM SESSION DATA` export,
+  so a file written here opens in Element and one written there opens here —
+  a vault only one application can open is a vault that locks somebody into
+  that application, which is why `exportSecrets` refuses to exist.
+
+  This library writes no file and reads none. `createKeyVault` returns text;
+  where it goes is a share sheet, a downloads folder or an iCloud Drive
+  directory, and that decision belongs to a product.
+
+  **Its ciphertext is authenticated, unlike the server backup's.** A vault
+  that has been altered fails to open rather than opening onto keys somebody
+  else chose. That is the difference between the two routes here, and a test
+  flips one character of a real vault's body to assert it.
+
+- Three error kinds. `wrong_key` is a well-formed restore key that opens a
   different backup — a different secret rather than a typo, which is a
   distinction a product has to word differently. `not_what_was_announced` is
   a downloaded attachment failing the SHA-256 its secret carried.
+  `wrong_passphrase` is a vault that did not open — two causes with one
+  answer, since the format cannot tell a wrong passphrase from an altered
+  file, and a product's wording has to cover both. Kept apart from
+  `wrong_key`: a restore key is generated and shown once, a vault passphrase
+  is chosen and typed, and the two are not the same sentence to anybody.
 
 ### Fixed
 
@@ -98,11 +119,18 @@ Versions 0.1.0 through 0.3.0 predate this file.
   says so rather than letting "end-to-end encrypted" imply more than the
   mechanism delivers.
 
-- **There are now two secrets in this library that look alike.**
-  `createRecovery`'s `recoveryKey` opens the account's private signing keys;
-  `createKeyBackup`'s `restoreKey` opens this backup's message keys. Both are
-  32 random bytes in base58 and neither opens what the other opens. A product
-  offering both must not call them the same thing.
+- **There are now three secrets in this library, and two of them look
+  alike.** `createRecovery`'s `recoveryKey` opens the account's private
+  signing keys; `createKeyBackup`'s `restoreKey` opens a backup's message
+  keys. Both are 32 random bytes in base58 and neither opens what the other
+  opens, so a product offering both must not call them the same thing. The
+  third, a vault passphrase, is chosen by a person rather than generated and
+  is unlikely to be confused with either.
+
+- **A vault is not a data export.** A vault holds _keys_, an export holds
+  _messages_. Somebody handed a `MEGOLM SESSION DATA` file has not received
+  their data — they have received the means to read it, which does not answer
+  the same question and should not be presented as though it did.
 
 ## 0.6.1
 

@@ -10,6 +10,7 @@ import {
   MachineFfiError_Tags,
   ProbeFfiError_Tags,
   SessionFfiError_Tags,
+  VaultFfiError_Tags,
 } from './generated/matrix_crypto'
 
 describe('toCryptoError', () => {
@@ -503,6 +504,7 @@ describe('every generated error variant maps to a kind of its own', () => {
     ['HistoryFfiError', HistoryFfiError_Tags],
     ['AttachmentFfiError', AttachmentFfiError_Tags],
     ['BackupFfiError', BackupFfiError_Tags],
+    ['VaultFfiError', VaultFfiError_Tags],
   ]
 
   /**
@@ -513,7 +515,7 @@ describe('every generated error variant maps to a kind of its own', () => {
    * grows a variant this number changes here, deliberately, in the same
    * change that adds the mapping.
    */
-  const EXPECTED_VARIANTS = 52
+  const EXPECTED_VARIANTS = 56
 
   it('refuses to pass having walked nothing', () => {
     for (const [name, tags] of GENERATED) {

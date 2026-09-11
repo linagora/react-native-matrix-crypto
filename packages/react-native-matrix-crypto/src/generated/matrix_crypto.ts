@@ -559,6 +559,68 @@ export async function createIdentity(asyncOpts_?: {
 }
 
 /**
+ * Puts every scope key this account holds into one file, encrypted under
+ * `passphrase`. Mirrors `create_key_vault`; see its own doc comment in
+ * `matrix-crypto-core::vault`, and that module's own, for why the format is
+ * Matrix's rather than this library's, why nothing is written to disk here,
+ * and why the call takes a noticeable moment.
+ *
+ * **What comes back is a plaintext secret in the sense that matters**: it
+ * is every key this account holds, protected by whatever the person typed.
+ * It belongs in a file and then nowhere -- not a log, not a variable that
+ * outlives the operation.
+ */
+export async function createKeyVault(
+  passphrase: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<string> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_create_key_vault(
+          FfiConverterString.lower(passphrase, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterString.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeVaultFfiError.lift.bind(
+        FfiConverterTypeVaultFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Writes this account's private signing keys into server-side storage,
  * under a key derived from `passphrase`.
  *
@@ -1396,6 +1458,68 @@ export async function openCryptoStore(
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeMachineFfiError.lift.bind(
         FfiConverterTypeMachineFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Opens a vault and imports the keys it holds. Mirrors `open_key_vault`;
+ * see its own doc comment for why `imported` below `offered` is not a
+ * failure, and why a wrong passphrase and an altered file are one answer
+ * rather than two.
+ *
+ * Reuses `BackupImport` rather than declaring a third record of the same
+ * two counts: it is the same fact -- how many keys a file offered, and how
+ * many landed -- and the two surfaces are siblings.
+ */
+export async function openKeyVault(
+  vault: string,
+  passphrase: string,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<BackupImport> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_open_key_vault(
+          FfiConverterString.lower(vault, nativeModule().rustbuffer_alloc),
+          FfiConverterString.lower(passphrase, nativeModule().rustbuffer_alloc)
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeBackupImport.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeVaultFfiError.lift.bind(
+        FfiConverterTypeVaultFfiError
       )
     );
   } catch (__error: any) {
@@ -6683,6 +6807,228 @@ const FfiConverterTypeSessionFfiError = (() => {
   return new FFIConverter();
 })();
 
+// Error type: VaultFfiError
+export enum VaultFfiError_Tags {
+  NotInitialised = "NotInitialised",
+  Failed = "Failed",
+  MalformedPayload = "MalformedPayload",
+  WrongPassphrase = "WrongPassphrase",
+}
+/**
+ * The wire mirror of `matrix_crypto_core::VaultError`.
+ *
+ * A new enum rather than a fold into `BackupFfiError`, on the rule
+ * `HistoryFfiError` states in full and for a second reason of its own: the
+ * two surfaces fail differently on purpose. A vault has a passphrase and an
+ * authenticated ciphertext, so `WrongPassphrase` covers a condition the
+ * server backup cannot have, and `WrongKey` covers one a vault cannot.
+ */
+export const VaultFfiError = (() => {
+  type NotInitialised__interface = {
+    tag: VaultFfiError_Tags.NotInitialised;
+  };
+  class NotInitialised_
+    extends UniffiError
+    implements NotInitialised__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "VaultFfiError";
+    readonly tag = VaultFfiError_Tags.NotInitialised;
+    constructor() {
+      super("VaultFfiError", "NotInitialised");
+    }
+
+    static new(): NotInitialised_ {
+      return new NotInitialised_();
+    }
+
+    static instanceOf(obj: any): obj is NotInitialised_ {
+      return obj.tag === VaultFfiError_Tags.NotInitialised;
+    }
+    static hasInner(obj: any): obj is NotInitialised_ {
+      return false;
+    }
+  }
+
+  type Failed__interface = {
+    tag: VaultFfiError_Tags.Failed;
+  };
+  class Failed_ extends UniffiError implements Failed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "VaultFfiError";
+    readonly tag = VaultFfiError_Tags.Failed;
+    constructor() {
+      super("VaultFfiError", "Failed");
+    }
+
+    static new(): Failed_ {
+      return new Failed_();
+    }
+
+    static instanceOf(obj: any): obj is Failed_ {
+      return obj.tag === VaultFfiError_Tags.Failed;
+    }
+    static hasInner(obj: any): obj is Failed_ {
+      return false;
+    }
+  }
+
+  type MalformedPayload__interface = {
+    tag: VaultFfiError_Tags.MalformedPayload;
+  };
+  class MalformedPayload_
+    extends UniffiError
+    implements MalformedPayload__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "VaultFfiError";
+    readonly tag = VaultFfiError_Tags.MalformedPayload;
+    constructor() {
+      super("VaultFfiError", "MalformedPayload");
+    }
+
+    static new(): MalformedPayload_ {
+      return new MalformedPayload_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedPayload_ {
+      return obj.tag === VaultFfiError_Tags.MalformedPayload;
+    }
+    static hasInner(obj: any): obj is MalformedPayload_ {
+      return false;
+    }
+  }
+
+  type WrongPassphrase__interface = {
+    tag: VaultFfiError_Tags.WrongPassphrase;
+  };
+  class WrongPassphrase_
+    extends UniffiError
+    implements WrongPassphrase__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "VaultFfiError";
+    readonly tag = VaultFfiError_Tags.WrongPassphrase;
+    constructor() {
+      super("VaultFfiError", "WrongPassphrase");
+    }
+
+    static new(): WrongPassphrase_ {
+      return new WrongPassphrase_();
+    }
+
+    static instanceOf(obj: any): obj is WrongPassphrase_ {
+      return obj.tag === VaultFfiError_Tags.WrongPassphrase;
+    }
+    static hasInner(obj: any): obj is WrongPassphrase_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is VaultFfiError {
+    return obj[uniffiTypeNameSymbol] === "VaultFfiError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    NotInitialised: NotInitialised_,
+    Failed: Failed_,
+    MalformedPayload: MalformedPayload_,
+    WrongPassphrase: WrongPassphrase_,
+  });
+})();
+/**
+ * The wire mirror of `matrix_crypto_core::VaultError`.
+ *
+ * A new enum rather than a fold into `BackupFfiError`, on the rule
+ * `HistoryFfiError` states in full and for a second reason of its own: the
+ * two surfaces fail differently on purpose. A vault has a passphrase and an
+ * authenticated ciphertext, so `WrongPassphrase` covers a condition the
+ * server backup cannot have, and `WrongKey` covers one a vault cannot.
+ */
+export type VaultFfiError = InstanceType<
+  (typeof VaultFfiError)[
+    | "NotInitialised"
+    | "Failed"
+    | "MalformedPayload"
+    | "WrongPassphrase"]
+>;
+
+// FfiConverter for enum VaultFfiError
+const FfiConverterTypeVaultFfiError = (() => {
+  type TypeName = VaultFfiError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return new VaultFfiError.NotInitialised();
+        case 2:
+          return new VaultFfiError.Failed();
+        case 3:
+          return new VaultFfiError.MalformedPayload();
+        case 4:
+          return new VaultFfiError.WrongPassphrase();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value.tag) {
+        case VaultFfiError_Tags.NotInitialised: {
+          c.writeI32(1);
+          return;
+        }
+        case VaultFfiError_Tags.Failed: {
+          c.writeI32(2);
+          return;
+        }
+        case VaultFfiError_Tags.MalformedPayload: {
+          c.writeI32(3);
+          return;
+        }
+        case VaultFfiError_Tags.WrongPassphrase: {
+          c.writeI32(4);
+          return;
+        }
+        default:
+          // Throwing from here means that VaultFfiError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case VaultFfiError_Tags.NotInitialised: {
+          return 4;
+        }
+        case VaultFfiError_Tags.Failed: {
+          return 4;
+        }
+        case VaultFfiError_Tags.MalformedPayload: {
+          return 4;
+        }
+        case VaultFfiError_Tags.WrongPassphrase: {
+          return 4;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
 /**
  * How far along one verification flow is. Mirror of the core's
  * `FlowStage`, carrying the UniFFI enum derive.
@@ -7267,6 +7613,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_key_vault() !==
+    26281
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_create_key_vault"
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_recovery() !==
     13929
   ) {
@@ -7392,6 +7746,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_open_crypto_store"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_open_key_vault() !==
+    55642
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_open_key_vault"
     );
   }
   if (
@@ -7595,6 +7957,7 @@ export default Object.freeze({
     FfiConverterTypeSessionFfiError,
     FfiConverterTypeSyncOutcome,
     FfiConverterTypeTrustState,
+    FfiConverterTypeVaultFfiError,
     FfiConverterTypeVerificationStage,
   },
 });

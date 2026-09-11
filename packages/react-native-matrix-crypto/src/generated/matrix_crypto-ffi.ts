@@ -215,6 +215,9 @@ interface NativeModuleInterface {
     config: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_create_identity(): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_create_key_vault(
+    passphrase: Uint8Array
+  ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_create_recovery(
     passphrase: Uint8Array,
     accountData: Uint8Array
@@ -270,6 +273,10 @@ interface NativeModuleInterface {
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_open_crypto_store(
     config: Uint8Array
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_open_key_vault(
+    vault: Uint8Array,
+    passphrase: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_probe(
     input: Uint8Array,
@@ -360,6 +367,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_backup(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_crypto_machine(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_identity(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_key_vault(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_create_recovery(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_attachment(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_decrypt_event(): number;
@@ -376,6 +384,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_offer_codes(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_offered_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_open_crypto_store(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_open_key_vault(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_probe(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_probe_with_observer(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_receive_history_bundle(): number;

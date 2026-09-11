@@ -369,6 +369,19 @@ export type CryptoErrorKind =
   // RETRIABLE: the same bytes fail the same way, though downloading them
   // again is a reasonable thing for a product to do once.
   | 'not_what_was_announced'
+  // ---- the key vault -----------------------------------------------------
+  // `openKeyVault` was handed a file it could not open. **Two causes and one
+  // answer**: the passphrase is wrong, or the file has been altered since it
+  // was written. The export format's MAC is computed over its ciphertext
+  // under a key derived from the passphrase, so nothing can tell the two
+  // apart, and a product's wording has to cover both.
+  //
+  // Not folded into 'wrong_key' above, which belongs to the server backup: a
+  // restore key is generated and shown once, a vault passphrase is chosen
+  // and typed, and "that is the wrong key" and "that passphrase did not work"
+  // are not the same sentence to anybody. Absent from RETRIABLE: the same
+  // passphrase opens the same file exactly as often as it did the first time.
+  | 'wrong_passphrase'
   | 'not_implemented'
   | 'not_initialised'
   | 'already_initialised'
@@ -469,6 +482,10 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // were already served by the entries around this map, since it is keyed on
   // the variant name alone.
   ['WrongKey', 'wrong_key'],
+  // `VaultFfiError`'s one kind of its own. Its other three -- `NotInitialised`,
+  // `Failed`, `MalformedPayload` -- were already served, as every enum's
+  // shared kinds are, because this map is keyed on the variant name alone.
+  ['WrongPassphrase', 'wrong_passphrase'],
   ['BundleUnreadable', 'bundle_unreadable'],
   // `AttachmentFfiError`'s two. `MalformedSecret` is a secret that is not
   // one this library produced, which is the same fault and the same remedy

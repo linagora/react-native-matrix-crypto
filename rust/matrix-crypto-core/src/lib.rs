@@ -16,6 +16,7 @@ mod recovery;
 mod runtime;
 mod session;
 mod signing;
+mod vault;
 mod verification;
 
 pub use attachment::{decrypt_attachment, encrypt_attachment, AttachmentError, SealedAttachment};
@@ -43,6 +44,7 @@ pub use session::{
     SenderTrustRequirement, SenderVerification, SessionError, SyncOutcome,
 };
 pub use signing::{bootstrap_identity, create_identity, identity_status, IdentityStatus};
+pub use vault::{create_key_vault, open_key_vault, VaultError};
 pub use verification::{
     accept_flow, begin_comparison, cancel_flow, code_capabilities, confirm_flow, confirm_scan,
     flow_stage, offer_codes, read_code, read_material, request_flow, request_self_flow,
