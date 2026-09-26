@@ -28,6 +28,7 @@ import {
   DEMO_USER_ID,
   demoMachineConfig,
 } from './cryptoConfig'
+import { timeOprfMasking } from './oprfTiming'
 import { nthSignal } from './signalOrder'
 
 /**
@@ -106,6 +107,11 @@ import { nthSignal } from './signalOrder'
  *   separates them. `observer::emit` and
  *   `docs/measurements/2026-08-29-signal-delivery-latency.md` carry the
  *   detail and the samples.
+ *
+ * - `PROBE_OPRF_BLIND_MS`, `PROBE_OPRF_FINALIZE_MS`, `PROBE_OPRF_OUTPUTS`
+ *   -- the OPRF client on two thousand inputs, timed after the second
+ *   signal. `oprfTiming.ts` says what each line measures and why
+ *   finalising reads a fixture.
  *
  * They are not checks: nothing passes or fails on them, the summary's
  * denominator does not move, and `scripts/run-probe-on-emulator.sh` prints
@@ -310,6 +316,7 @@ export function ProbeHarness({ storeDir }: { storeDir: string }) {
         )
         results.push(await realCryptoCheck())
         await timeASecondSignal()
+        await timeOprfMasking()
       } catch (e) {
         // Neither suite is supposed to be able to reach this: both report
         // failing checks instead of throwing. If one ever does, the run
