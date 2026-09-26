@@ -39,15 +39,26 @@ EXPECTED_TAG="$3"
 # A publish is not instantly visible to every registry read. Retry rather than
 # fail on propagation, but bound it: a tag that never appears is a real defect,
 # not a slow one.
+#
+# TEN MINUTES, AND THE MINUTE THIS USED TO ALLOW WAS WRONG. It read six attempts
+# over a minute. On 26 September 2026 `npm publish` answered
+# `+ react-native-matrix-crypto@0.8.0` at 19:57:50 UTC, this check gave up at
+# 19:58:46, and the registry first listed 0.8.0 at 20:02:40: close to five
+# minutes, for a publish that had landed. The release run went red on a release
+# that was fine. Thirty attempts twenty seconds apart outlast what was seen by
+# a margin, and a publish that has not shown in ten minutes is still one worth
+# failing on. `--prefer-online` so that no cached answer is read as the
+# registry's.
+ATTEMPTS=30
 TAGS=""
-for attempt in 1 2 3 4 5 6; do
-  if TAGS=$(npm view "$PACKAGE" dist-tags --json 2>/dev/null) && [ -n "$TAGS" ]; then
+for attempt in $(seq 1 "$ATTEMPTS"); do
+  if TAGS=$(npm view "$PACKAGE" dist-tags --json --prefer-online 2>/dev/null) && [ -n "$TAGS" ]; then
     if printf '%s' "$TAGS" | grep -q "\"$VERSION\""; then
       break
     fi
   fi
-  echo "  registry does not yet report $VERSION (attempt $attempt/6); waiting"
-  sleep 10
+  echo "  registry does not yet report $VERSION (attempt $attempt/$ATTEMPTS); waiting"
+  sleep 20
   TAGS=""
 done
 
@@ -55,7 +66,8 @@ if [ -z "$TAGS" ]; then
   echo "FAIL: the registry never reported $PACKAGE@$VERSION under any tag."
   echo "      The publish claimed success. Either it did not land, or the"
   echo "      registry is not serving it. Do not treat this as a slow read:"
-  echo "      six attempts over a minute is longer than propagation takes."
+  echo "      ten minutes is twice the slowest propagation seen (see the"
+  echo "      comment above the retries)."
   exit 1
 fi
 
