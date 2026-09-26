@@ -192,6 +192,7 @@ interface NativeModuleInterface {
     verificationId: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_backup_state(): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_blind_oprf(inputs: Uint8Array): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_bootstrap_identity(): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_build_history_bundle(
     scope: Uint8Array
@@ -253,6 +254,13 @@ interface NativeModuleInterface {
     scope: Uint8Array,
     eventType: Uint8Array,
     payloadJson: Uint8Array
+  ): bigint;
+  ubrn_uniffi_matrix_crypto_ffi_fn_func_finalize_oprf(
+    inputs: Uint8Array,
+    clientStates: Uint8Array,
+    evaluationElements: Uint8Array,
+    proof: Uint8Array,
+    publicKey: Uint8Array
   ): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_identity_status(): bigint;
   ubrn_uniffi_matrix_crypto_ffi_fn_func_mark_request_failed(
@@ -358,6 +366,7 @@ interface NativeModuleInterface {
   ubrn_ffi_matrix_crypto_ffi_uniffi_contract_version(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_accept_verification(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_backup_state(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_blind_oprf(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_bootstrap_identity(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_build_history_bundle(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_cancel_verification(): number;
@@ -378,6 +387,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_enable_backup(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_attachment(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_encrypt_event(): number;
+  ubrn_uniffi_matrix_crypto_ffi_checksum_func_finalize_oprf(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_identity_status(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_failed(): number;
   ubrn_uniffi_matrix_crypto_ffi_checksum_func_mark_request_sent(): number;

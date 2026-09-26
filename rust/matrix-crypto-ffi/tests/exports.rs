@@ -221,3 +221,24 @@ fn both_halves_of_the_code_switch_reach_the_core() {
          stopped offering codes would go on announcing them"
     );
 }
+
+/// Both OPRF calls exist on this crate's surface and reach the core: one
+/// blinded element per input from the first, and the core's typed refusal
+/// from the second, handed one evaluated element for two inputs.
+#[tokio::test]
+async fn ffi_oprf_calls_delegate_to_core() {
+    let inputs = vec![b"+33612345678".to_vec(), b"+33698765432".to_vec()];
+    let blinding = matrix_crypto_ffi::blind_oprf(inputs.clone()).await.unwrap();
+    assert_eq!(blinding.blinded_elements.len(), 2);
+
+    let refused = matrix_crypto_ffi::finalize_oprf(
+        inputs,
+        blinding.client_states,
+        blinding.blinded_elements[..1].to_vec(),
+        vec![0; 64],
+        vec![0; 32],
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, matrix_crypto_ffi::OprfFfiError::Rejected));
+}

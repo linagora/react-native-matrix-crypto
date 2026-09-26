@@ -44,6 +44,9 @@ export { onCryptoSignal } from './signals'
 export type { ProbeResult, ProbeSignal } from './probe'
 export { runProbe } from './probe'
 
+export type { OprfBlinding } from './oprf'
+export { blindOprf, finalizeOprf } from './oprf'
+
 export type {
   AccountDataEntry,
   BackupImport,

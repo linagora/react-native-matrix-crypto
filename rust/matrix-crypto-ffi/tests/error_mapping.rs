@@ -424,3 +424,26 @@ fn every_machine_error_maps_to_the_matching_ffi_variant() {
          said either would alarm a person who simply read the wrong screen"
     );
 }
+
+/// All three `OprfError` variants, each to its own kind. `ProofRejected`
+/// above all stays apart from `MalformedPayload`: an answer that fails its
+/// proof is one a product refuses, and an answer that does not parse is one
+/// it may ask for again.
+#[test]
+fn every_oprf_error_maps_to_the_matching_ffi_variant() {
+    use matrix_crypto_core::OprfError;
+    use matrix_crypto_ffi::OprfFfiError;
+
+    assert!(matches!(
+        OprfFfiError::from(OprfError::Rejected),
+        OprfFfiError::Rejected
+    ));
+    assert!(matches!(
+        OprfFfiError::from(OprfError::MalformedPayload),
+        OprfFfiError::MalformedPayload
+    ));
+    assert!(matches!(
+        OprfFfiError::from(OprfError::ProofRejected),
+        OprfFfiError::ProofRejected
+    ));
+}

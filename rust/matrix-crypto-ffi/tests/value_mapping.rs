@@ -883,3 +883,30 @@ fn a_recovery_setup_keeps_its_key_and_the_order_of_its_account_data() {
     // carrying it across would still look plausible above and fails here.
     assert_ne!(mapped.account_data[0].content, mapped.recovery_key);
 }
+
+/// Two fields of the same type whose places matter more than any other
+/// pair's in this crate: `blinded_elements` are what a product sends the
+/// server, and `client_states`, which hold the blinds, stay on the device. A
+/// mapping that crossed them would compile and pass every other test; this
+/// one tells them apart.
+///
+/// Built from the real call rather than a literal, so each field has its real
+/// shape: a blinded element is 32 bytes, a client state 64, the blind then
+/// the element.
+#[test]
+fn an_oprf_blinding_keeps_what_is_sent_apart_from_what_is_kept() {
+    let core = futures::executor::block_on(matrix_crypto_core::blind_oprf(vec![
+        b"+33612345678".to_vec(),
+        b"+33698765432".to_vec(),
+    ]))
+    .unwrap();
+    let expected_elements = core.blinded_elements.clone();
+    let expected_states = core.client_states.clone();
+
+    let ffi = matrix_crypto_ffi::OprfBlinding::from(core);
+
+    assert_eq!(ffi.blinded_elements, expected_elements);
+    assert_eq!(ffi.client_states, expected_states);
+    assert!(ffi.blinded_elements.iter().all(|e| e.len() == 32));
+    assert!(ffi.client_states.iter().all(|s| s.len() == 64));
+}

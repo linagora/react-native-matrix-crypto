@@ -109,7 +109,13 @@ where
     F: Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    match runtime().spawn(future).await {
+    value_or_its_panic(runtime().spawn(future).await)
+}
+
+/// The value a task returned, or its panic resumed on the caller's side, so
+/// that UniFFI's `catch_unwind` turns it into a typed error there.
+fn value_or_its_panic<T>(joined: Result<T, tokio::task::JoinError>) -> T {
+    match joined {
         Ok(value) => value,
         Err(joined) => std::panic::resume_unwind(
             joined
@@ -117,6 +123,26 @@ where
                 .unwrap_or_else(|_| Box::new("crypto task cancelled")),
         ),
     }
+}
+
+/// Runs `work` on this library's blocking pool and waits for its result.
+///
+/// For computation that holds a thread for a long time and awaits nothing,
+/// such as blinding two thousand inputs in `oprf.rs`. Handed to `in_runtime`, it
+/// would occupy one of the two async workers for its whole duration, and
+/// encryption, decryption and every other call in flight would wait on the
+/// one left. The blocking pool is a different set of threads, as
+/// `spawn_blocking_detached` explains; this is that pool, with the result
+/// awaited instead of dropped.
+///
+/// A panic inside `work` propagates here, like `in_runtime`'s, and reaches the
+/// caller as a typed error.
+pub(crate) async fn on_blocking_pool<F, T>(work: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    value_or_its_panic(runtime().spawn_blocking(work).await)
 }
 
 #[cfg(test)]
@@ -136,6 +162,31 @@ mod tests {
         }));
 
         assert_eq!(doubled, 42);
+    }
+
+    /// Like the test above, with no ambient runtime: the pool is this
+    /// library's own, and the value comes back to a caller that has none.
+    #[test]
+    fn work_on_the_blocking_pool_returns_its_value_with_no_ambient_runtime() {
+        let doubled = futures::executor::block_on(on_blocking_pool(|| 21 * 2));
+
+        assert_eq!(doubled, 42);
+    }
+
+    /// A panic inside the work reaches the caller, rather than a value that
+    /// never comes.
+    #[test]
+    fn a_panic_on_the_blocking_pool_reaches_the_caller() {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+
+        let outcome = std::panic::catch_unwind(|| {
+            futures::executor::block_on(on_blocking_pool(|| -> u32 { panic!("inside the work") }))
+        });
+
+        std::panic::set_hook(previous);
+
+        assert!(outcome.is_err(), "the panic must propagate to the caller");
     }
 
     /// The control. Without `in_runtime` the same spawn panics, which is the
