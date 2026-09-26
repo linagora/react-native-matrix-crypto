@@ -16,6 +16,38 @@ stability section states, a minor release may still change the surface.
 
 Versions 0.1.0 through 0.3.0 predate this file.
 
+## 0.8.0
+
+### Added
+
+- The client half of an oblivious pseudorandom function, [RFC 9497]'s
+  verifiable mode with the ristretto255-SHA512 suite: a product asks its
+  server for a keyed function of inputs the server never receives, such as
+  the numbers of an address book for contact discovery. `blindOprf` blinds a
+  batch and returns `OprfBlinding`, whose `blindedElements` are the only part
+  meant for the server; `finalizeOprf` checks the server's batch proof against
+  a public key the product names, and unblinds. The outputs are the bytes the
+  server computes when it evaluates an input itself.
+
+  **The proof is always checked.** An answer whose proof does not verify
+  returns no output. The client states that hold each input's blind are not
+  properties of the blinding, so nothing that serialises one can send them.
+
+  This library holds no key and makes no request: the server half stays on
+  the product's side, like every other request. It takes no crypto machine
+  either, and works before one exists.
+
+- One error kind. `proof_rejected` is an answer that parses and says
+  something false about its key; `rejected` and `malformed_payload` keep
+  their meanings for a batch that cannot be processed and an answer that does
+  not parse.
+
+- Eight crates in the dependency tree, all from `voprf` 0.5.0: `voprf`
+  itself, `base16ct`, `crypto-bigint`, `derive-where`, `elliptic-curve`,
+  `ff`, `group` and `sec1`.
+
+[RFC 9497]: https://www.rfc-editor.org/rfc/rfc9497
+
 ## 0.7.0
 
 ### Added

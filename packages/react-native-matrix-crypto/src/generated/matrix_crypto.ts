@@ -162,6 +162,68 @@ export async function backupState(asyncOpts_?: {
 }
 
 /**
+ * Blinds a batch of inputs for a server to evaluate. Mirrors `blind_oprf`;
+ * see its own doc comment in `matrix-crypto-core::oprf`, and that module's
+ * own, for what the server receives and why only the blinded elements are
+ * meant to leave the device.
+ *
+ * Takes no machine: masking inputs has nothing to do with this account's
+ * keys, and works before one exists.
+ */
+export async function blindOprf(
+  inputs: Array<ArrayBuffer>,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<OprfBlinding> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_blind_oprf(
+          FfiConverterSequenceBytes.lower(
+            inputs,
+            nativeModule().rustbuffer_alloc
+          )
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterTypeOprfBlinding.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeOprfFfiError.lift.bind(
+        FfiConverterTypeOprfFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Publishes the signing identity this device already holds.
  *
  * Mirrors `bootstrap_identity`; see its own doc comment in
@@ -1174,6 +1236,81 @@ export async function encryptEvent(
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeSessionFfiError.lift.bind(
         FfiConverterTypeSessionFfiError
+      )
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Checks a server's answer to a blinded batch and unblinds it. Mirrors
+ * `finalize_oprf`; see its own doc comment for the order of the arguments,
+ * and why an answer that fails the check returns no output at all.
+ */
+export async function finalizeOprf(
+  inputs: Array<ArrayBuffer>,
+  clientStates: Array<ArrayBuffer>,
+  evaluationElements: Array<ArrayBuffer>,
+  proof: ArrayBuffer,
+  publicKey: ArrayBuffer,
+  asyncOpts_?: { signal: AbortSignal }
+): Promise<Array<ArrayBuffer>> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_matrix_crypto_ffi_fn_func_finalize_oprf(
+          FfiConverterSequenceBytes.lower(
+            inputs,
+            nativeModule().rustbuffer_alloc
+          ),
+          FfiConverterSequenceBytes.lower(
+            clientStates,
+            nativeModule().rustbuffer_alloc
+          ),
+          FfiConverterSequenceBytes.lower(
+            evaluationElements,
+            nativeModule().rustbuffer_alloc
+          ),
+          FfiConverterArrayBuffer.lower(proof, nativeModule().rustbuffer_alloc),
+          FfiConverterArrayBuffer.lower(
+            publicKey,
+            nativeModule().rustbuffer_alloc
+          )
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_matrix_crypto_ffi_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      // Borrowed view over foreign memory: the call site owns the free,
+      // as on the sync paths. Unconditional — a no-op where buffers are
+      // already JS-owned.
+      /*liftFunc:*/ (__rb) => {
+        try {
+          return FfiConverterSequenceBytes.lift(__rb);
+        } finally {
+          nativeModule().rustbuffer_free(__rb);
+        }
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeOprfFfiError.lift.bind(
+        FfiConverterTypeOprfFfiError
       )
     );
   } catch (__error: any) {
@@ -3452,6 +3589,54 @@ const FfiConverterTypeIdentityStatus = (() => {
         FfiConverterBool.allocationSize(value.privateKeysHeld) +
         FfiConverterBool.allocationSize(value.accountKeysAnswerUnsettled) +
         FfiConverterBool.allocationSize(value.identityPublicationPending)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * The wire mirror of `matrix_crypto_core::OprfBlinding`.
+ */
+export type OprfBlinding = {
+  blindedElements: Array<ArrayBuffer>;
+  clientStates: Array<ArrayBuffer>;
+};
+
+/**
+ * Generated factory for {@link OprfBlinding} record objects.
+ */
+export const OprfBlinding = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<OprfBlinding, ReturnType<typeof defaults>>(
+      defaults
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<OprfBlinding>,
+  });
+})();
+
+const FfiConverterTypeOprfBlinding = (() => {
+  type TypeName = OprfBlinding;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      return {
+        blindedElements: FfiConverterSequenceBytes.readFromCursor(c),
+        clientStates: FfiConverterSequenceBytes.readFromCursor(c),
+      };
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      FfiConverterSequenceBytes.writeIntoCursor(value.blindedElements, c);
+      FfiConverterSequenceBytes.writeIntoCursor(value.clientStates, c);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterSequenceBytes.allocationSize(value.blindedElements) +
+        FfiConverterSequenceBytes.allocationSize(value.clientStates)
       );
     }
   }
@@ -6055,6 +6240,179 @@ const FfiConverterTypeMachineFfiError = (() => {
   return new FFIConverter();
 })();
 
+// Error type: OprfFfiError
+export enum OprfFfiError_Tags {
+  Rejected = "Rejected",
+  MalformedPayload = "MalformedPayload",
+  ProofRejected = "ProofRejected",
+}
+/**
+ * The wire mirror of `matrix_crypto_core::OprfError`.
+ *
+ * A new enum rather than a fold into another, on the rule `HistoryFfiError`
+ * states in full: `ProofRejected` is a condition no other surface has, and a
+ * product that masks inputs has no use for a machine's kinds, since these
+ * calls take no machine.
+ */
+export const OprfFfiError = (() => {
+  type Rejected__interface = {
+    tag: OprfFfiError_Tags.Rejected;
+  };
+  class Rejected_ extends UniffiError implements Rejected__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "OprfFfiError";
+    readonly tag = OprfFfiError_Tags.Rejected;
+    constructor() {
+      super("OprfFfiError", "Rejected");
+    }
+
+    static new(): Rejected_ {
+      return new Rejected_();
+    }
+
+    static instanceOf(obj: any): obj is Rejected_ {
+      return obj.tag === OprfFfiError_Tags.Rejected;
+    }
+    static hasInner(obj: any): obj is Rejected_ {
+      return false;
+    }
+  }
+
+  type MalformedPayload__interface = {
+    tag: OprfFfiError_Tags.MalformedPayload;
+  };
+  class MalformedPayload_
+    extends UniffiError
+    implements MalformedPayload__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "OprfFfiError";
+    readonly tag = OprfFfiError_Tags.MalformedPayload;
+    constructor() {
+      super("OprfFfiError", "MalformedPayload");
+    }
+
+    static new(): MalformedPayload_ {
+      return new MalformedPayload_();
+    }
+
+    static instanceOf(obj: any): obj is MalformedPayload_ {
+      return obj.tag === OprfFfiError_Tags.MalformedPayload;
+    }
+    static hasInner(obj: any): obj is MalformedPayload_ {
+      return false;
+    }
+  }
+
+  type ProofRejected__interface = {
+    tag: OprfFfiError_Tags.ProofRejected;
+  };
+  class ProofRejected_ extends UniffiError implements ProofRejected__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "OprfFfiError";
+    readonly tag = OprfFfiError_Tags.ProofRejected;
+    constructor() {
+      super("OprfFfiError", "ProofRejected");
+    }
+
+    static new(): ProofRejected_ {
+      return new ProofRejected_();
+    }
+
+    static instanceOf(obj: any): obj is ProofRejected_ {
+      return obj.tag === OprfFfiError_Tags.ProofRejected;
+    }
+    static hasInner(obj: any): obj is ProofRejected_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is OprfFfiError {
+    return obj[uniffiTypeNameSymbol] === "OprfFfiError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    Rejected: Rejected_,
+    MalformedPayload: MalformedPayload_,
+    ProofRejected: ProofRejected_,
+  });
+})();
+/**
+ * The wire mirror of `matrix_crypto_core::OprfError`.
+ *
+ * A new enum rather than a fold into another, on the rule `HistoryFfiError`
+ * states in full: `ProofRejected` is a condition no other surface has, and a
+ * product that masks inputs has no use for a machine's kinds, since these
+ * calls take no machine.
+ */
+export type OprfFfiError = InstanceType<
+  (typeof OprfFfiError)["Rejected" | "MalformedPayload" | "ProofRejected"]
+>;
+
+// FfiConverter for enum OprfFfiError
+const FfiConverterTypeOprfFfiError = (() => {
+  type TypeName = OprfFfiError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    readFromCursor(c: Cursor): TypeName {
+      switch (c.readI32()) {
+        case 1:
+          return new OprfFfiError.Rejected();
+        case 2:
+          return new OprfFfiError.MalformedPayload();
+        case 3:
+          return new OprfFfiError.ProofRejected();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    writeIntoCursor(value: TypeName, c: Cursor): void {
+      switch (value.tag) {
+        case OprfFfiError_Tags.Rejected: {
+          c.writeI32(1);
+          return;
+        }
+        case OprfFfiError_Tags.MalformedPayload: {
+          c.writeI32(2);
+          return;
+        }
+        case OprfFfiError_Tags.ProofRejected: {
+          c.writeI32(3);
+          return;
+        }
+        default:
+          // Throwing from here means that OprfFfiError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case OprfFfiError_Tags.Rejected: {
+          return 4;
+        }
+        case OprfFfiError_Tags.MalformedPayload: {
+          return 4;
+        }
+        case OprfFfiError_Tags.ProofRejected: {
+          return 4;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
 // Error type: ProbeFfiError
 export enum ProbeFfiError_Tags {
   Rejected = "Rejected",
@@ -7466,6 +7824,11 @@ const FfiConverterOptionalTypeSenderVerification = new FfiConverterOptional(
   FfiConverterTypeSenderVerification
 );
 
+// FfiConverter for Array<ArrayBuffer>
+const FfiConverterSequenceBytes = new FfiConverterArray(
+  FfiConverterArrayBuffer
+);
+
 // FfiConverter for Array<AccountDataEntry>
 const FfiConverterSequenceTypeAccountDataEntry = new FfiConverterArray(
   FfiConverterTypeAccountDataEntry
@@ -7538,6 +7901,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_backup_state"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_blind_oprf() !==
+    45233
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_blind_oprf"
     );
   }
   if (
@@ -7698,6 +8069,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_matrix_crypto_ffi_checksum_func_encrypt_event"
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_matrix_crypto_ffi_checksum_func_finalize_oprf() !==
+    30995
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_matrix_crypto_ffi_checksum_func_finalize_oprf"
     );
   }
   if (
@@ -7942,6 +8321,8 @@ export default Object.freeze({
     FfiConverterTypeIdentityKeys,
     FfiConverterTypeIdentityStatus,
     FfiConverterTypeMachineFfiError,
+    FfiConverterTypeOprfBlinding,
+    FfiConverterTypeOprfFfiError,
     FfiConverterTypeOutgoingRequest,
     FfiConverterTypeProbeFfiError,
     FfiConverterTypeProbeObserver,

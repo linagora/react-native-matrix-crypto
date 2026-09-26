@@ -2087,3 +2087,87 @@ pub async fn open_key_vault(
         .map(Into::into)
         .map_err(Into::into)
 }
+
+/// The wire mirror of `matrix_crypto_core::OprfError`.
+///
+/// A new enum rather than a fold into another, on the rule `HistoryFfiError`
+/// states in full: `ProofRejected` is a condition no other surface has, and a
+/// product that masks inputs has no use for a machine's kinds, since these
+/// calls take no machine.
+#[derive(Debug, uniffi::Error, thiserror::Error)]
+pub enum OprfFfiError {
+    #[error("the input was rejected")]
+    Rejected,
+    #[error("the payload could not be parsed")]
+    MalformedPayload,
+    #[error("the proof does not verify against the public key")]
+    ProofRejected,
+}
+
+impl From<matrix_crypto_core::OprfError> for OprfFfiError {
+    fn from(error: matrix_crypto_core::OprfError) -> Self {
+        use matrix_crypto_core::OprfError as Core;
+        match error {
+            Core::Rejected => OprfFfiError::Rejected,
+            Core::MalformedPayload => OprfFfiError::MalformedPayload,
+            Core::ProofRejected => OprfFfiError::ProofRejected,
+        }
+    }
+}
+
+/// The wire mirror of `matrix_crypto_core::OprfBlinding`.
+#[derive(Debug, uniffi::Record)]
+pub struct OprfBlinding {
+    pub blinded_elements: Vec<Vec<u8>>,
+    pub client_states: Vec<Vec<u8>>,
+}
+
+impl From<matrix_crypto_core::OprfBlinding> for OprfBlinding {
+    fn from(blinding: matrix_crypto_core::OprfBlinding) -> Self {
+        let matrix_crypto_core::OprfBlinding {
+            blinded_elements,
+            client_states,
+        } = blinding;
+        OprfBlinding {
+            blinded_elements,
+            client_states,
+        }
+    }
+}
+
+/// Blinds a batch of inputs for a server to evaluate. Mirrors `blind_oprf`;
+/// see its own doc comment in `matrix-crypto-core::oprf`, and that module's
+/// own, for what the server receives and why only the blinded elements are
+/// meant to leave the device.
+///
+/// Takes no machine: masking inputs has nothing to do with this account's
+/// keys, and works before one exists.
+#[uniffi::export]
+pub async fn blind_oprf(inputs: Vec<Vec<u8>>) -> Result<OprfBlinding, OprfFfiError> {
+    matrix_crypto_core::blind_oprf(inputs)
+        .await
+        .map(Into::into)
+        .map_err(Into::into)
+}
+
+/// Checks a server's answer to a blinded batch and unblinds it. Mirrors
+/// `finalize_oprf`; see its own doc comment for the order of the arguments,
+/// and why an answer that fails the check returns no output at all.
+#[uniffi::export]
+pub async fn finalize_oprf(
+    inputs: Vec<Vec<u8>>,
+    client_states: Vec<Vec<u8>>,
+    evaluation_elements: Vec<Vec<u8>>,
+    proof: Vec<u8>,
+    public_key: Vec<u8>,
+) -> Result<Vec<Vec<u8>>, OprfFfiError> {
+    matrix_crypto_core::finalize_oprf(
+        inputs,
+        client_states,
+        evaluation_elements,
+        proof,
+        public_key,
+    )
+    .await
+    .map_err(Into::into)
+}

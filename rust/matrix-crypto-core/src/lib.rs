@@ -11,6 +11,7 @@ mod history;
 mod identity;
 mod machine;
 mod observer;
+mod oprf;
 mod probe;
 mod recovery;
 mod runtime;
@@ -35,6 +36,7 @@ pub use observer::{
     clear_crypto_observer, probe_with_observer, set_crypto_observer, CryptoObserver, CryptoSignal,
     ProbeObserver, ProbeSignal,
 };
+pub use oprf::{blind_oprf, finalize_oprf, OprfBlinding, OprfError};
 pub use probe::{probe, ProbeReport};
 pub use recovery::{create_recovery, recover_identity, AccountDataEntry, RecoverySetup};
 pub use runtime::in_runtime;

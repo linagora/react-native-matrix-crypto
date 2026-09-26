@@ -382,6 +382,19 @@ export type CryptoErrorKind =
   // are not the same sentence to anybody. Absent from RETRIABLE: the same
   // passphrase opens the same file exactly as often as it did the first time.
   | 'wrong_passphrase'
+  // ---- the OPRF client ---------------------------------------------------
+  // `finalizeOprf` was handed an answer whose proof does not verify against
+  // the public key it was given: the batch was evaluated with another key,
+  // or what came back is not what the server computed. No output comes back,
+  // not even for the elements the proof would have covered.
+  //
+  // Not folded into 'malformed_payload', which is an answer that does not
+  // parse: this one parses, and says something false about its key, which a
+  // product should refuse rather than retry. Fetching the public keys again
+  // is the one thing worth doing first, since a key may have changed between
+  // reading it and asking. Absent from RETRIABLE: the same answer fails the
+  // same check every time.
+  | 'proof_rejected'
   | 'not_implemented'
   | 'not_initialised'
   | 'already_initialised'
@@ -486,6 +499,10 @@ const KIND_BY_NAME = new Map<string, CryptoErrorKind>([
   // `Failed`, `MalformedPayload` -- were already served, as every enum's
   // shared kinds are, because this map is keyed on the variant name alone.
   ['WrongPassphrase', 'wrong_passphrase'],
+  // `OprfFfiError`'s one kind of its own. Its other two -- `Rejected` and
+  // `MalformedPayload` -- were already served, because this map is keyed on
+  // the variant name alone.
+  ['ProofRejected', 'proof_rejected'],
   ['BundleUnreadable', 'bundle_unreadable'],
   // `AttachmentFfiError`'s two. `MalformedSecret` is a secret that is not
   // one this library produced, which is the same fault and the same remedy

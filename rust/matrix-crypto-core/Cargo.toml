@@ -61,6 +61,21 @@ serde = { version = "1", features = ["derive"] }
 # enables it for its own `Raw<T>`) to carry it in through Cargo's feature
 # unification -- the same reasoning as `serde`'s "derive" feature above.
 serde_json = { version = "1", features = ["raw_value"] }
+# The client half of RFC 9497's oblivious pseudorandom function, for
+# `oprf.rs`. `ristretto255-ciphersuite` is the one suite that module speaks,
+# and `alloc` is what batching needs. The default features are off because
+# the only other one, `serde`, would serialise a client state, which crosses
+# the boundary as the library's own bytes and nothing else.
+#
+# The same version and features as the server that evaluates what this
+# client blinds, so that both halves are one implementation tested against
+# one set of the RFC's vectors.
+voprf = { version = "0.5.0", default-features = false, features = ["ristretto255-ciphersuite", "alloc"] }
+# `getrandom`, for the operating system's generator: a blind is what keeps an
+# input from the server, so it comes from nowhere else. `rand_core` 0.6 is the
+# version `voprf` takes its generator from, and already in the tree through
+# `matrix-sdk-crypto`.
+rand_core = { version = "0.6", features = ["getrandom"] }
 thiserror = "2"
 # `sync` added explicitly for `tokio::sync::Mutex` in `machine.rs`: this crate
 # calls it directly, so it declares the feature itself rather than relying on

@@ -8,6 +8,7 @@ import {
   BackupFfiError_Tags,
   HistoryFfiError_Tags,
   MachineFfiError_Tags,
+  OprfFfiError_Tags,
   ProbeFfiError_Tags,
   SessionFfiError_Tags,
   VaultFfiError_Tags,
@@ -505,6 +506,7 @@ describe('every generated error variant maps to a kind of its own', () => {
     ['AttachmentFfiError', AttachmentFfiError_Tags],
     ['BackupFfiError', BackupFfiError_Tags],
     ['VaultFfiError', VaultFfiError_Tags],
+    ['OprfFfiError', OprfFfiError_Tags],
   ]
 
   /**
@@ -515,7 +517,7 @@ describe('every generated error variant maps to a kind of its own', () => {
    * grows a variant this number changes here, deliberately, in the same
    * change that adds the mapping.
    */
-  const EXPECTED_VARIANTS = 56
+  const EXPECTED_VARIANTS = 59
 
   it('refuses to pass having walked nothing', () => {
     for (const [name, tags] of GENERATED) {
